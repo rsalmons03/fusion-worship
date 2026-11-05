@@ -1,5 +1,5 @@
 "use client";
-import { CUE_VOICES, type CueVoiceId, cueClick, cueClock, preloadCues, sayCue, unlockCues } from "@/lib/cueVoice";
+import { CUE_VOICES, type CueVoiceId, cueClick, cueClock, playThroughSilentSwitch, preloadCues, sayCue, unlockCues } from "@/lib/cueVoice";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { parseChordPro, sectionsOf, type SectionInfo } from "@/lib/chordpro";
@@ -134,6 +134,7 @@ export default function RehearsalPlayer({
     unlockCues();
     sayCue(v, "Verse 1");
   };
+  useEffect(() => playThroughSilentSwitch(), []);
   useEffect(() => {
     preloadCues(voice, [...sections.map((x) => x.label), "1", "2", "3", "4", "Cues on"]);
   }, [voice, sections]);

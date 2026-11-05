@@ -27,6 +27,17 @@ export function cueSlug(label: string): string | null {
 }
 
 let ctx: AudioContext | null = null;
+
+/**
+ * iPhones mute web sound when the ring/silent switch is on, unless the page says it's a player (like a music app).
+ * Safari 16.4+ supports navigator.audioSession.
+ */
+export function playThroughSilentSwitch() {
+  try {
+    const n = navigator as unknown as { audioSession?: { type: string } };
+    if (n.audioSession && n.audioSession.type !== "playback") n.audioSession.type = "playback";
+  } catch {}
+}
 const buffers = new Map<string, Promise<AudioBuffer | null>>();
 
 function context() {
@@ -40,6 +51,7 @@ function context() {
 
 /** Call from a tap: lets the voice play later without another tap (iPhone). */
 export function unlockCues() {
+  playThroughSilentSwitch();
   const c = context();
   if (!c) return;
   c.resume().catch(() => {});
