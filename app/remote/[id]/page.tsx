@@ -19,8 +19,10 @@ export default function RemotePage() {
     activeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [state.slide]);
 
-  const toggle = (k: "logo" | "clear" | "black") => set((s) => ({ logo: false, clear: false, black: false, [k]: !s[k] }));
-  const go = (i: number) => set({ slide: i, logo: false, clear: false, black: false });
+  // Doing anything by hand takes over from "follow the track".
+  const toggle = (k: "logo" | "clear" | "black") => set((s) => ({ logo: false, clear: false, black: false, follow: false, [k]: !s[k] }));
+  const go = (i: number) => set({ slide: i, logo: false, clear: false, black: false, follow: false });
+  const step = (dir: 1 | -1) => set((s) => ({ ...stepState(s, dir, slides.length), follow: false }));
   const setLines = (n: number) => {
     // stay on the same song when re-splitting
     const idx = cur ? buildSlides(items, n).findIndex((x) => x.itemId === cur.itemId) : 0;
@@ -38,8 +40,15 @@ export default function RemotePage() {
           <Link href={`/plans/${id}`} className="opacity-70">✕</Link>
           <span className="flex-1 truncate font-semibold">{plan ? `${planLabel(plan)} · ${fmtDate(plan.service_date, { year: undefined })}` : "…"}</span>
           <span className={`h-2 w-2 rounded-full ${online ? "bg-green-400" : "bg-amber-400"}`} title={online ? "Live" : "Connecting"} />
-          <Link href={`/screen/${id}`} target="_blank" className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">Open screen ↗</Link>
+          <Link href={`/stage/${id}`} target="_blank" className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">Stage ↗</Link>
+          <Link href={`/screen/${id}`} target="_blank" className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">Screen ↗</Link>
         </div>
+        <button
+          onClick={() => set((s) => ({ follow: !s.follow }))}
+          className={`mt-2 w-full rounded-md py-1.5 text-xs font-bold ${state.follow ? "bg-accent text-white" : "bg-stone-800 text-stone-300"}`}
+        >
+          {state.follow ? "🔗 Following the track (▶ Play page) – tap a slide to take over" : "🔗 Follow the track: off – turn on to change slides automatically"}
+        </button>
         <div className="mt-2 grid grid-cols-2 gap-2">
           <div>
             <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-stone-400">Live</div>
@@ -111,8 +120,8 @@ export default function RemotePage() {
           ))}
         </div>
         <div className="grid grid-cols-2 gap-2">
-          <button className="rounded-lg bg-stone-800 py-4 text-lg font-bold" onClick={() => set((s) => stepState(s, -1, slides.length))}>← Back</button>
-          <button className="rounded-lg bg-accent py-4 text-lg font-bold" onClick={() => set((s) => stepState(s, 1, slides.length))}>Next →</button>
+          <button className="rounded-lg bg-stone-800 py-4 text-lg font-bold" onClick={() => step(-1)}>← Back</button>
+          <button className="rounded-lg bg-accent py-4 text-lg font-bold" onClick={() => step(1)}>Next →</button>
         </div>
       </footer>
     </div>

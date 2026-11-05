@@ -17,7 +17,7 @@ export function usePlanSlides(planId: string, linesPerSlide: number) {
     });
     supabase
       .from("plan_items")
-      .select("id, kind, title, description, songs(chordpro, author)")
+      .select("id, kind, title, description, song_id, songs(chordpro, author)")
       .eq("plan_id", planId)
       .order("position")
       .then(({ data, error }) => {

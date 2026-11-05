@@ -26,8 +26,8 @@ export default function ScreenPage() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
-      if (["arrowright", "arrowdown", "pagedown", " ", "enter"].includes(k)) set((s) => stepState(s, 1, slides.length));
-      else if (["arrowleft", "arrowup", "pageup", "backspace"].includes(k)) set((s) => stepState(s, -1, slides.length));
+      if (["arrowright", "arrowdown", "pagedown", " ", "enter"].includes(k)) set((s) => ({ ...stepState(s, 1, slides.length), follow: false }));
+      else if (["arrowleft", "arrowup", "pageup", "backspace"].includes(k)) set((s) => ({ ...stepState(s, -1, slides.length), follow: false }));
       else if (k === "b" || k === ".") set((s) => ({ black: !s.black }));
       else if (k === "c") set((s) => ({ clear: !s.clear }));
       else if (k === "l") set((s) => ({ logo: !s.logo }));
@@ -54,8 +54,8 @@ export default function ScreenPage() {
         {!error && slides.length === 0 && <span className="text-amber-200">No slides yet: add songs with charts to this plan.</span>}
       </div>
       {/* Tap left/right side to go back/forward (handy on a tablet). */}
-      <button aria-label="Previous" className="absolute inset-y-0 left-0 w-1/4 cursor-[inherit]" onClick={() => set((s) => stepState(s, -1, slides.length))} />
-      <button aria-label="Next" className="absolute inset-y-0 right-0 w-1/4 cursor-[inherit]" onClick={() => set((s) => stepState(s, 1, slides.length))} />
+      <button aria-label="Previous" className="absolute inset-y-0 left-0 w-1/4 cursor-[inherit]" onClick={() => set((s) => ({ ...stepState(s, -1, slides.length), follow: false }))} />
+      <button aria-label="Next" className="absolute inset-y-0 right-0 w-1/4 cursor-[inherit]" onClick={() => set((s) => ({ ...stepState(s, 1, slides.length), follow: false }))} />
     </div>
   );
 }

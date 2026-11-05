@@ -66,6 +66,7 @@ export default function RehearsalPlayer({
   bpm,
   title,
   hideRoadmap = false,
+  onPosition,
 }: {
   songId: string;
   chart: string;
@@ -82,6 +83,8 @@ export default function RehearsalPlayer({
   /** Shown in the player bar (set player). */
   title?: string;
   hideRoadmap?: boolean;
+  /** Reports where playback is: the section number (null before the first) and how far through it (0–1). */
+  onPosition?: (pos: { n: number | null; progress: number; playing: boolean }) => void;
 }) {
   const sections = useMemo(() => sectionsOf(chart), [chart]);
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -376,6 +379,15 @@ export default function RehearsalPlayer({
     const r = sectionRange(current);
     if (r && time >= r.end - 0.05) a.currentTime = r.start;
   }, [time, loop, current, sectionRange]);
+
+  const posCb = useRef(onPosition);
+  posCb.current = onPosition;
+  useEffect(() => {
+    if (!posCb.current) return;
+    const r = current === null ? null : sectionRange(current);
+    const progress = r && r.end > r.start ? Math.min(0.999, Math.max(0, (time - r.start) / (r.end - r.start))) : 0;
+    posCb.current({ n: current, progress, playing });
+  }, [time, current, playing, sectionRange]);
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.playbackRate = rate;

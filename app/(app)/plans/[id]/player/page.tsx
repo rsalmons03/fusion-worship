@@ -8,6 +8,9 @@ import ChordSheet from "@/components/ChordSheet";
 import RehearsalPlayer from "@/components/RehearsalPlayer";
 import SongListen from "@/components/SongListen";
 import Tutorials from "@/components/Tutorials";
+import { useScreenSync } from "@/components/screen/useScreenSync";
+import { usePlanSlides } from "@/components/screen/usePlanSlides";
+import { slideForPosition } from "@/lib/slides";
 import { prefersFlats, semitonesBetween } from "@/lib/chordpro";
 import { fileExt, fileIcon, isAudio } from "@/lib/media";
 import { fmtDate, planLabel } from "@/lib/format";
@@ -32,6 +35,9 @@ export default function SetPlayerPage() {
   const [autoPlay, setAutoPlay] = useState(false);
   const [tab, setTab] = useState<Tab>("Chart");
   const [files, setFiles] = useState<FileRow[]>([]);
+  // Lyrics screen: when "follow" is on, the slides change by themselves as the track plays.
+  const screen = useScreenSync(params.id);
+  const { slides } = usePlanSlides(params.id, screen.state.lines);
 
   useEffect(() => {
     supabase.from("plans").select("*").eq("id", params.id).maybeSingle().then(({ data }) => setPlan(data as Plan));
@@ -120,6 +126,22 @@ export default function SetPlayerPage() {
         ))}
       </div>
 
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+        <button
+          onClick={() => screen.set((st) => ({ follow: !st.follow }))}
+          className={`rounded-full px-3 py-1.5 font-bold ${screen.state.follow ? "bg-accent text-white" : "border border-line bg-white text-muted"}`}
+          title="The lyrics screen changes slides by itself as this track plays"
+        >
+          🖥 Lyrics follow track: {screen.state.follow ? "ON" : "off"}
+        </button>
+        <span className="flex items-center gap-1 text-muted">
+          <span className={`h-2 w-2 rounded-full ${screen.online ? "bg-green-500" : "bg-amber-400"}`} />
+          {screen.online ? "Lyrics screen linked" : "Connecting…"}
+        </span>
+        <Link href={`/remote/${params.id}`} className="font-semibold text-accent">Lyrics remote</Link>
+        <Link href={`/stage/${params.id}`} target="_blank" className="font-semibold text-accent">Stage display ↗</Link>
+      </div>
+
       {/* Roadmap + player (stays mounted across tabs so playback continues) */}
       <div>
         {song && (
@@ -134,6 +156,12 @@ export default function SetPlayerPage() {
             onPrevSong={() => go(idx - 1, false)}
             onNextSong={(playing) => go(idx + 1, playing)}
             hideRoadmap={tab !== "Chart" && tab !== "Lyrics"}
+            onPosition={(pos) => {
+              const st = screen.state;
+              if (!st.follow || !pos.playing || !item) return;
+              const i = slideForPosition(slides, item.id, pos);
+              if (i >= 0 && (i !== st.slide || st.logo || st.clear || st.black)) screen.set({ slide: i, logo: false, clear: false, black: false });
+            }}
           />
         )}
       </div>
