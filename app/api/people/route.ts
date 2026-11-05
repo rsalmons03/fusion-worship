@@ -4,41 +4,49 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 
-// Admin adds a person with a starting password (no email is sent).
+// Admin adds a person (no email is sent). Email is optional: without one they get a
+// placeholder login nobody can use, so they can be scheduled before they ever sign in.
+const PLACEHOLDER_DOMAIN = "no-email.fusion.invalid";
 export async function POST(req: Request) {
   const me = await callerProfile();
   if (me?.role !== "admin") return NextResponse.json({ error: "Admins only" }, { status: 403 });
 
   const { email, name, password, role, location_id } = await req.json().catch(() => ({}));
-  const cleanEmail = String(email ?? "").trim().toLowerCase();
-  const pw = String(password ?? "");
-  if (!/^\S+@\S+\.\S+$/.test(cleanEmail)) return NextResponse.json({ error: "Valid email required" }, { status: 400 });
-  if (pw.length < 8) return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+  const cleanName = String(name ?? "").trim();
+  const realEmail = String(email ?? "").trim().toLowerCase();
+  const hasEmail = realEmail !== "";
+  if (hasEmail && !/^\S+@\S+\.\S+$/.test(realEmail)) return NextResponse.json({ error: "That email doesn't look right" }, { status: 400 });
+  if (!hasEmail && !cleanName) return NextResponse.json({ error: "Enter a name (or an email)" }, { status: 400 });
+  const cleanEmail = hasEmail ? realEmail : `${crypto.randomUUID()}@${PLACEHOLDER_DOMAIN}`;
+  let pw = String(password ?? "");
+  if (hasEmail && pw && pw.length < 8) return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+  if (!pw) pw = crypto.randomUUID() + crypto.randomUUID(); // nobody knows it; set a real one later with "Set password"
   if (!["admin", "leader", "member"].includes(role)) return NextResponse.json({ error: "Bad role" }, { status: 400 });
   if (location_id && !UUID_RE.test(String(location_id))) return NextResponse.json({ error: "Bad location" }, { status: 400 });
 
   const admin = createAdminClient();
-  const { data: existing } = await admin.from("profiles").select("id").ilike("email", cleanEmail).maybeSingle();
+  const { data: existing } = hasEmail ? await admin.from("profiles").select("id").ilike("email", cleanEmail).maybeSingle() : { data: null };
   let id = existing?.id as string | undefined;
-  if (id) {
+  if (id && password) {
     const { error } = await admin.auth.admin.updateUserById(id, { password: pw });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  } else {
+  } else if (!id) {
     const { data, error } = await admin.auth.admin.createUser({
       email: cleanEmail,
       password: pw,
       email_confirm: true,
-      user_metadata: { full_name: String(name ?? "").trim() },
+      user_metadata: { full_name: cleanName },
     });
     if (error || !data.user) return NextResponse.json({ error: error?.message ?? "Could not create user" }, { status: 500 });
     id = data.user.id;
   }
   const patch: Record<string, string | null> = { role };
-  if (String(name ?? "").trim()) patch.full_name = String(name).trim();
+  if (cleanName) patch.full_name = cleanName;
+  if (!hasEmail) patch.email = null; // show "no email" instead of the placeholder
   if (location_id !== undefined) patch.location_id = location_id || null;
   const { error: upErr } = await admin.from("profiles").update(patch).eq("id", id);
   if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 });
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, id, hasEmail, setPassword: !!password });
 }
 
 // Admin changes someone's sign-in email, or sets (resets) their password.

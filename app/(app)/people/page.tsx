@@ -95,7 +95,13 @@ export default function PeoplePage() {
     const body = await res.json().catch(() => ({}));
     setBusy(false);
     if (!res.ok) return setMsg(body.error ?? "Could not add person");
-    setMsg(`Added ${form.email}. They can sign in at ${window.location.origin}/login with that email and the starting password.`);
+    setMsg(
+      !body.hasEmail
+        ? `Added ${form.name}. They can be scheduled now. Add an email and password later (Edit) if they need to sign in.`
+        : body.setPassword
+        ? `Added ${form.email}. They can sign in at ${window.location.origin}/login with that email and the starting password.`
+        : `Added ${form.email}. Use Edit → Set password when they're ready to sign in.`
+    );
     setForm({ email: "", name: "", password: "", role: "member", location_id: "" });
     load();
   }
@@ -122,9 +128,11 @@ export default function PeoplePage() {
       )}
 
       <form onSubmit={add} className="card grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_auto_auto_auto] lg:items-end">
-        <label className="block"><span className="label">Email</span><input type="email" required className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
-        <label className="block"><span className="label">Name</span><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
-        <label className="block"><span className="label">Starting password</span><input className="input" required minLength={8} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="8+ characters" autoComplete="off" /></label>
+        <label className="block"><span className="label">Email (optional)</span><input type="email" className="input" placeholder="Only if they'll sign in" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
+        <label className="block"><span className="label">Name</span><input className="input" required={!form.email.trim()} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
+        {form.email.trim() && (
+          <label className="block"><span className="label">Starting password</span><input className="input" minLength={8} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="8+ characters (optional)" autoComplete="off" /></label>
+        )}
         <label className="block"><span className="label">Role</span>
           <select className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as Role })}>
             {ROLES.filter((r) => r.value !== "pending").map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
@@ -161,7 +169,7 @@ export default function PeoplePage() {
                       {p.role === "pending" && <span className="ml-1 rounded-sm bg-amber-100 px-1.5 text-[10px] font-bold uppercase text-amber-800">Pending</span>}
                     </div>
                     <div className="truncate text-sm text-muted">
-                      {p.email}
+                      {p.email || <span className="italic">No email · can&apos;t sign in yet</span>}
                       {p.phone && ` · ${p.phone}`}
                     </div>
                     <div className="mt-1.5 flex flex-wrap gap-1">
