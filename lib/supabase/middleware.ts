@@ -11,7 +11,8 @@ export async function updateSession(request: NextRequest) {
     path === "/login" ||
     path.startsWith("/auth") ||
     path.startsWith("/respond") || // accept/decline link from email; secured by its token
-    path === "/api/respond";
+    path === "/api/respond" ||
+    path === "/api/version";
 
   const toLogin = () => {
     const url = request.nextUrl.clone();
