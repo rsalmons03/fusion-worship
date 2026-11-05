@@ -22,6 +22,7 @@ export type Song = {
   themes: string | null;
   chordpro: string;
   reference_url: string | null;
+  multitracks_url?: string | null;
   notes: string | null;
   archived: boolean;
 };

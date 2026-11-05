@@ -142,3 +142,87 @@ export function keyFromSource(src: string) {
   const m = src.match(/\{\s*key\s*:\s*([^}]+)\}/i);
   return m ? m[1].trim() : null;
 }
+
+// ───────────── Chord charts pasted as "chords over lyrics" ─────────────
+
+const CHORD_TOKEN_RE = /^\(?([A-G][#b]?)(m|maj|min|dim|aug|sus|add|M)?[0-9]*(sus[24]?|add[0-9]+|maj[0-9]*|[#b][0-9]+|\([^)]*\))*(\/[A-G][#b]?)?\)?$/;
+const EXTRA_TOKENS = new Set(["|", "||", "-", "/", "N.C.", "NC", "x2", "x3", "x4", "%", "(", ")"]);
+
+function isChordToken(t: string) {
+  return CHORD_TOKEN_RE.test(t) || EXTRA_TOKENS.has(t) || /^x\d+$/i.test(t);
+}
+
+/** A line made only of chords (e.g. "G     D/F#    Em   C"). */
+export function isChordLine(line: string) {
+  const toks = line.trim().split(/\s+/).filter(Boolean);
+  if (!toks.length) return false;
+  const chords = toks.filter((t) => CHORD_TOKEN_RE.test(t));
+  return chords.length > 0 && toks.every(isChordToken);
+}
+
+function mergeChordsIntoLyric(chordLine: string, lyric: string) {
+  const marks: { at: number; chord: string }[] = [];
+  const re = /\S+/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(chordLine))) marks.push({ at: m.index, chord: m[0] });
+  let out = lyric.padEnd(Math.max(lyric.length, (marks.at(-1)?.at ?? 0)), " ");
+  for (let i = marks.length - 1; i >= 0; i--) {
+    const { at, chord } = marks[i];
+    out = out.slice(0, at) + `[${chord}]` + out.slice(at);
+  }
+  return out.replace(/\s+$/, "");
+}
+
+/**
+ * Converts a pasted chart with chords on their own line above the lyrics into ChordPro.
+ * Lines that are already ChordPro (contain [chords]) are kept as they are.
+ */
+export function chordsOverLyricsToChordPro(text: string): string {
+  const lines = text.replace(/\r\n?/g, "\n").replace(/\t/g, "    ").split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (isChordLine(line) && !/\[[^\]]+\]/.test(line)) {
+      const next = lines[i + 1];
+      const nextIsLyric = next !== undefined && next.trim() !== "" && !isChordLine(next) && !SECTION_RE.test(next.trim()) && !/^\{.*\}$/.test(next.trim());
+      if (nextIsLyric) {
+        out.push(mergeChordsIntoLyric(line, next));
+        i++;
+      } else {
+        // chords with no lyric under them (intro, turnaround)
+        out.push(line.trim().split(/\s+/).map((c) => `[${c}]`).join(" "));
+      }
+      continue;
+    }
+    out.push(line.replace(/\s+$/, ""));
+  }
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+// ───────────── Nashville numbers ─────────────
+
+const DEGREES = ["1", "b2", "2", "b3", "3", "4", "#4", "5", "b6", "6", "b7", "7"];
+
+/** Converts a chord to its number in the given key, e.g. ("D/F#", "G") -> "5/7". */
+export function toNumber(chord: string, key: string | null | undefined): string {
+  const k = key ? splitKey(key) : null;
+  const m = chord.match(CHORD_RE);
+  if (!k || !m) return chord;
+  const tonic = noteIndex(k.root);
+  const deg = (note: string) => {
+    const i = noteIndex(note);
+    return i < 0 || tonic < 0 ? note : DEGREES[(i - tonic + 12) % 12];
+  };
+  const [, root, quality, bass] = m;
+  return deg(root) + quality + (bass ? "/" + deg(bass) : "");
+}
+
+/** The common chords in a key, for quick insertion: I ii iii IV V vi plus a few borrowed ones. */
+export function chordsInKey(key: string | null | undefined): string[] {
+  const k = key ? splitKey(key) : null;
+  if (!k) return ["C", "Dm", "Em", "F", "G", "Am", "C/E", "G/B"];
+  const flats = prefersFlats(k.root) || ["F", "Bb", "Eb", "Ab", "Db", "Gb"].includes(k.root);
+  const n = (semi: number) => shiftNote(k.root, semi, flats);
+  if (k.minor) return [n(0) + "m", n(3), n(5) + "m", n(7) + "m", n(8), n(10), n(7), n(3) + "/" + n(7)];
+  return [n(0), n(2) + "m", n(4) + "m", n(5), n(7), n(9) + "m", n(10), n(0) + "/" + n(4), n(7) + "/" + n(11), n(5) + "/" + n(9), n(7) + "sus", n(2)];
+}

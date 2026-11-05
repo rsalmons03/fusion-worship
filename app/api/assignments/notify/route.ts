@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { escapeHtml, sendEmail, siteUrl } from "@/lib/email";
 import { CHURCH_NAME, fmtDate, fmtTime } from "@/lib/format";
 
-// Emails a "Can you serve?" request to everyone on a plan whose status is still 'unsent'.
+// Sends a "Can you serve?" request (email if configured, otherwise in-app) to everyone on a plan whose status is still 'unsent'.
 export async function POST(req: Request) {
   const me = await callerProfile();
   if (!me || (me.role !== "admin" && me.role !== "leader")) {
@@ -23,6 +23,19 @@ export async function POST(req: Request) {
     .eq("plan_id", planId)
     .eq("status", "unsent");
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // No email service set up: requests appear on each person's home screen to Accept / Decline.
+  if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) {
+    const ids = (rows ?? []).map((r: { id: string }) => r.id);
+    if (ids.length) {
+      const { error: upErr } = await admin
+        .from("assignments")
+        .update({ status: "pending", notified_at: new Date().toISOString() })
+        .in("id", ids);
+      if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 });
+    }
+    return NextResponse.json({ sent: ids.length, failed: 0, errors: [], inApp: true });
+  }
 
   const base = siteUrl(req);
   const when = `${fmtDate(plan.service_date, { weekday: "long", month: "long" })}${plan.start_time ? ` at ${fmtTime(plan.start_time)}` : ""}`;
@@ -49,7 +62,7 @@ export async function POST(req: Request) {
           <p>Hi ${escapeHtml(first)},</p>
           <p>Can you serve as <b>${escapeHtml(role)}</b> on <b>${escapeHtml(when)}</b>${plan.title ? ` (${escapeHtml(plan.title)})` : ""}?</p>
           ${plan.notes ? `<p style="color:#78716c;white-space:pre-wrap">${escapeHtml(plan.notes)}</p>` : ""}
-          <p><a href="${link}" style="display:inline-block;background:#6d28d9;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">Accept or decline</a></p>
+          <p><a href="${link}" style="display:inline-block;background:#df6437;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">Accept or decline</a></p>
           <p style="color:#78716c;font-size:13px">${escapeHtml(CHURCH_NAME)}</p></div>`,
       });
       await admin.from("assignments").update({ status: "pending", notified_at: new Date().toISOString() }).eq("id", r.id);

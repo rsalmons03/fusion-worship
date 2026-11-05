@@ -170,7 +170,12 @@ export default function PlanPage() {
     const body = await res.json().catch(() => ({}));
     setSending(false);
     if (!res.ok) alert(body.error ?? "Could not send requests");
-    else alert(`Sent ${body.sent} request${body.sent === 1 ? "" : "s"}.${body.failed ? ` ${body.failed} failed: ${body.errors.join("; ")}` : ""}`);
+    else
+      alert(
+        body.inApp
+          ? `Asked ${body.sent} ${body.sent === 1 ? "person" : "people"}. They'll see Accept / Decline when they sign in.`
+          : `Sent ${body.sent} request${body.sent === 1 ? "" : "s"}.${body.failed ? ` ${body.failed} failed: ${body.errors.join("; ")}` : ""}`
+      );
     loadAssignments();
   }
 
@@ -269,7 +274,7 @@ export default function PlanPage() {
           <div className="flex items-center justify-between">
             <h2 className="h2">Teams</h2>
             {canEdit && (
-              <button className="btn print:hidden" disabled={!unsent || sending} onClick={sendRequests} title="Email everyone marked 'Not sent'">
+              <button className="btn print:hidden" disabled={!unsent || sending} onClick={sendRequests} title="Ask everyone marked 'Not sent' to confirm">
                 {sending ? "Sending…" : `Send requests${unsent ? ` (${unsent})` : ""}`}
               </button>
             )}

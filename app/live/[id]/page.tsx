@@ -20,6 +20,7 @@ export default function LiveView() {
   const [chords, setChords] = useState(true);
   const [size, setSize] = useState(20);
   const [dark, setDark] = useState(true);
+  const [numbers, setNumbers] = useState(false);
 
   useEffect(() => {
     try {
@@ -27,6 +28,7 @@ export default function LiveView() {
       if (typeof s.chords === "boolean") setChords(s.chords);
       if (typeof s.size === "number") setSize(s.size);
       if (typeof s.dark === "boolean") setDark(s.dark);
+      if (typeof s.numbers === "boolean") setNumbers(s.numbers);
     } catch {}
     const supabase = createClient();
     supabase.from("plans").select("*").eq("id", params.id).maybeSingle().then(({ data }) => setPlan(data as Plan));
@@ -40,9 +42,9 @@ export default function LiveView() {
 
   useEffect(() => {
     try {
-      localStorage.setItem("live-prefs", JSON.stringify({ chords, size, dark }));
+      localStorage.setItem("live-prefs", JSON.stringify({ chords, size, dark, numbers }));
     } catch {}
-  }, [chords, size, dark]);
+  }, [chords, size, dark, numbers]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -72,6 +74,7 @@ export default function LiveView() {
         <span className="truncate font-medium">{plan ? `${planLabel(plan)} · ${fmtDate(plan.service_date, { year: undefined })} ${fmtTime(plan.start_time)}` : "…"}</span>
         <div className="ml-auto flex items-center gap-1">
           <Btn onClick={() => setChords(!chords)} active={chords}>Chords</Btn>
+          <Btn onClick={() => setNumbers(!numbers)} active={numbers}>1-4-5</Btn>
           <Btn onClick={() => setSize((s) => Math.max(12, s - 2))}>A−</Btn>
           <Btn onClick={() => setSize((s) => Math.min(40, s + 2))}>A+</Btn>
           <Btn onClick={() => setDark(!dark)}>{dark ? "☀" : "☾"}</Btn>
@@ -111,7 +114,7 @@ export default function LiveView() {
           </div>
           {item.description && <p className="mb-4 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">{item.description}</p>}
           {item.songs ? (
-            <ChordSheet source={item.songs.chordpro} semis={semis} flats={prefersFlats(shownKey)} showChords={chords} fontSize={size} dark={dark} />
+            <ChordSheet source={item.songs.chordpro} semis={semis} flats={prefersFlats(shownKey)} showChords={chords} fontSize={size} dark={dark} numbersKey={numbers ? item.songs.default_key : null} />
           ) : (
             <p className="opacity-60">{item.duration_min ? `${item.duration_min} min` : ""}</p>
           )}

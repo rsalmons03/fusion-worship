@@ -17,6 +17,8 @@ export default function Nav() {
     { href: "/plans", label: "Plans" },
     { href: "/songs", label: "Songs" },
     { href: "/teams", label: "Teams" },
+    ...(me.isLeader ? [{ href: "/confirmations", label: "Confirmations" }] : []),
+    { href: "/trainings", label: "Trainings" },
     ...(me.isAdmin ? [{ href: "/people", label: "People" }] : []),
     { href: "/me", label: "My Profile" },
   ];
@@ -55,7 +57,7 @@ export default function Nav() {
               {loc.name(loc.current)}
             </span>
           ))}
-        <nav className="ml-2 hidden gap-1 md:flex">
+        <nav className="ml-2 hidden gap-1 lg:flex">
           {links.map((l) => (
             <Link
               key={l.href}
@@ -66,16 +68,16 @@ export default function Nav() {
             </Link>
           ))}
         </nav>
-        <div className="ml-auto hidden items-center gap-3 text-sm md:flex">
+        <div className="ml-auto hidden items-center gap-3 text-sm lg:flex">
           <span className="text-muted">{me.full_name || me.email}</span>
           <button onClick={signOut} className="btn-ghost">Sign out</button>
         </div>
-        <button className="ml-auto btn-ghost md:hidden" onClick={() => setOpen(!open)} aria-label="Menu">
+        <button className="ml-auto btn-ghost lg:hidden" onClick={() => setOpen(!open)} aria-label="Menu">
           ☰
         </button>
       </div>
       {open && (
-        <nav className="border-t border-line px-4 py-2 md:hidden">
+        <nav className="border-t border-line px-4 py-2 lg:hidden">
           {links.map((l) => (
             <Link key={l.href} href={l.href} onClick={() => setOpen(false)} className={`block py-2 ${active(l.href) ? "font-semibold text-accent" : ""}`}>
               {l.label}

@@ -1,4 +1,4 @@
-import { parseChordPro, transposeChord } from "@/lib/chordpro";
+import { parseChordPro, toNumber, transposeChord } from "@/lib/chordpro";
 
 export default function ChordSheet({
   source,
@@ -7,6 +7,7 @@ export default function ChordSheet({
   showChords = true,
   fontSize = 16,
   dark = false,
+  numbersKey = null,
 }: {
   source: string;
   semis?: number;
@@ -14,6 +15,8 @@ export default function ChordSheet({
   showChords?: boolean;
   fontSize?: number;
   dark?: boolean;
+  /** When set, chords are shown as Nashville numbers relative to this (original) key. */
+  numbersKey?: string | null;
 }) {
   const lines = parseChordPro(source);
   if (!lines.length) return <p className="text-sm italic opacity-60">No lyrics or chords yet.</p>;
@@ -41,7 +44,7 @@ export default function ChordSheet({
               <span key={j} className="inline-flex flex-col whitespace-pre">
                 {withChords && (
                   <span className={`font-mono text-[0.85em] font-semibold ${chordColor} pr-1`}>
-                    {s.chord ? transposeChord(s.chord, semis, flats) : " "}
+                    {s.chord ? (numbersKey ? toNumber(s.chord, numbersKey) : transposeChord(s.chord, semis, flats)) : " "}
                   </span>
                 )}
                 <span>{s.text || (withChords ? " " : "")}</span>

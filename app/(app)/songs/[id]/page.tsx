@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useProfile } from "@/components/ProfileContext";
 import ChordSheet from "@/components/ChordSheet";
+import ChartEditor from "@/components/ChartEditor";
+import SongFiles from "@/components/SongFiles";
 import { KEYS, keyFromSource, prefersFlats, semitonesBetween, transposeKey } from "@/lib/chordpro";
 import { fmtDate } from "@/lib/format";
 import type { Song } from "@/lib/types";
@@ -43,6 +45,8 @@ export default function SongPage() {
   const [editing, setEditing] = useState(isNew);
   const [saving, setSaving] = useState(false);
   const [viewKey, setViewKey] = useState("");
+  const [view, setView] = useState<"chords" | "numbers" | "lyrics">("chords");
+  const [hadMt, setHadMt] = useState(false);
   const [history, setHistory] = useState<{ plan_id: string; date: string; key: string | null }[]>([]);
 
   useEffect(() => {
@@ -51,6 +55,7 @@ export default function SongPage() {
       if (data) {
         const { id: _id, created_at: _c, updated_at: _u, ...rest } = data;
         setSong(rest as Omit<Song, "id">);
+        setHadMt("multitracks_url" in rest);
         setViewKey(rest.default_key ?? "");
       }
       setLoaded(true);
@@ -79,6 +84,11 @@ export default function SongPage() {
       bpm: song.bpm ? Number(song.bpm) : null,
       updated_at: new Date().toISOString(),
     };
+    // Only send the MultiTracks field once the database has it (or when it's filled in).
+    if (!payload.multitracks_url) {
+      if (hadMt) payload.multitracks_url = null;
+      else delete payload.multitracks_url;
+    }
     if (isNew) {
       const { data, error } = await supabase.from("songs").insert(payload).select("id").single();
       setSaving(false);
@@ -155,17 +165,16 @@ export default function SongPage() {
               <F label="CCLI #"><input className="input" value={song.ccli ?? ""} onChange={(e) => set("ccli", e.target.value)} /></F>
               <F label="Themes"><input className="input" placeholder="grace, communion, easter" value={song.themes ?? ""} onChange={(e) => set("themes", e.target.value)} /></F>
               <div className="sm:col-span-2">
-                <F label="Reference link (YouTube, Spotify, MultiTracks…)"><input className="input" value={song.reference_url ?? ""} onChange={(e) => set("reference_url", e.target.value)} /></F>
+                <F label="Reference link (YouTube, Spotify…)"><input className="input" value={song.reference_url ?? ""} onChange={(e) => set("reference_url", e.target.value)} /></F>
+              </div>
+              <div className="sm:col-span-2">
+                <F label="MultiTracks / ChartBuilder link"><input className="input" placeholder="Paste the song's MultiTracks link" value={song.multitracks_url ?? ""} onChange={(e) => set("multitracks_url", e.target.value)} /></F>
               </div>
             </div>
-            <F label="Lyrics & chords (ChordPro: put chords in [brackets] before the syllable)">
-              <textarea
-                className="input min-h-[320px] font-mono text-[13px]"
-                value={song.chordpro}
-                placeholder={SAMPLE}
-                onChange={(e) => set("chordpro", e.target.value)}
-              />
-            </F>
+            <div>
+              <span className="label">Chart: lyrics &amp; chords</span>
+              <ChartEditor value={song.chordpro} onChange={(v) => set("chordpro", v)} songKey={song.default_key} placeholder={SAMPLE} />
+            </div>
             <F label="Arrangement notes"><textarea className="input" rows={2} value={song.notes ?? ""} onChange={(e) => set("notes", e.target.value)} /></F>
             <div className="flex gap-2">
               <button className="btn" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save song"}</button>
@@ -192,11 +201,22 @@ export default function SongPage() {
                   <button className="btn-ghost" onClick={() => setViewKey(transposeKey(viewKey, 1))}>+½</button>
                 </>
               )}
-              <button className="btn-ghost ml-auto" onClick={() => window.print()}>Print</button>
+              <div className="ml-auto flex rounded-sm border border-line bg-white p-0.5 text-xs font-semibold uppercase">
+                {(["chords", "numbers", "lyrics"] as const).map((v) => (
+                  <button key={v} onClick={() => setView(v)} className={`rounded-sm px-2 py-1 ${view === v ? "bg-accent text-white" : "text-muted"}`} disabled={v === "numbers" && !song.default_key} title={v === "numbers" && !song.default_key ? "Set the original key first" : ""}>
+                    {v === "numbers" ? "1-4-5" : v}
+                  </button>
+                ))}
+              </div>
+              <button className="btn-ghost" onClick={() => window.print()}>Print</button>
             </div>
-            <ChordSheet source={song.chordpro} semis={semis} flats={flats} />
+            <ChordSheet source={song.chordpro} semis={semis} flats={flats} showChords={view !== "lyrics"} numbersKey={view === "numbers" ? song.default_key : null} />
           </div>
           <aside className="space-y-4">
+            {song.multitracks_url && (
+              <a href={song.multitracks_url} target="_blank" rel="noreferrer" className="btn w-full">Open in MultiTracks</a>
+            )}
+            {!isNew && <SongFiles songId={params.id} canEdit={canEdit} />}
             {song.reference_url && (
               <a href={song.reference_url} target="_blank" rel="noreferrer" className="card block text-sm text-accent hover:underline">▶ Listen / reference</a>
             )}
