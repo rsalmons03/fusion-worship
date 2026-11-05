@@ -42,7 +42,7 @@ export function embedFor(raw: string | null | undefined): Embed | null {
   return null;
 }
 
-export const AUDIO_EXT = ["mp3", "m4a", "wav", "aac", "ogg"];
+export const AUDIO_EXT = ["mp3", "m4a", "wav", "aac", "ogg", "aif", "aiff", "flac"];
 
 export function fileExt(path: string) {
   return (path.split(".").pop() ?? "").toLowerCase();

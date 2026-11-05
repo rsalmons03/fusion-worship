@@ -79,7 +79,7 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
       </div>
     );
   return (
-    <div className="card text-sm">
+    <div id="song-files" className="card scroll-mt-24 text-sm">
       <div className="label">Files</div>
       {files.length === 0 && <p className="mt-1 text-muted">None yet.{canEdit && " Upload PDF charts, MP3s, ProPresenter files…"}</p>}
       <ul className="mt-2 space-y-1">

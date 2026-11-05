@@ -192,8 +192,8 @@ export default function SongPage() {
           </div>
         </div>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
-          <div className="card">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
+          <div className="card min-w-0">
             <div className="mb-4 flex flex-wrap items-center gap-2 print:hidden">
               <span className="text-sm text-muted">View in key</span>
               <select className="input w-auto py-1" value={viewKey} onChange={(e) => setViewKey(e.target.value)} disabled={!song.default_key}>

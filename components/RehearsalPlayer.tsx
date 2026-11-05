@@ -69,6 +69,7 @@ export default function RehearsalPlayer({
   const [tracks, setTracks] = useState<Track[]>([]);
   const [trackIdx, setTrackIdx] = useState(0);
   const [markersOk, setMarkersOk] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const track = tracks[trackIdx];
 
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -101,7 +102,10 @@ export default function RehearsalPlayer({
         const { data } = await supabase.storage.from("charts").createSignedUrl(f.path, 60 * 60 * 6);
         if (data) out.push({ id: f.id, name: f.name, url: data.signedUrl, markers: f.markers ?? {} });
       }
-      if (alive) setTracks(out);
+      if (alive) {
+        setTracks(out);
+        setLoaded(true);
+      }
     })();
     return () => {
       alive = false;
@@ -311,6 +315,19 @@ export default function RehearsalPlayer({
 
   return (
     <>
+      {loaded && !tracks.length && !onNextSong && (
+        <div className={`mb-4 flex flex-wrap items-center gap-2 rounded-sm px-3 py-2 text-sm print:hidden ${dark ? "bg-white/10" : "bg-accent-soft"}`}>
+          <span className="flex-1">🎵 No audio for this song yet.{canEdit && " Upload an MP3 to play it here."}</span>
+          {canEdit && (
+            <button
+              className="btn"
+              onClick={() => document.getElementById("song-files")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+            >
+              Upload audio
+            </button>
+          )}
+        </div>
+      )}
       {sections.length > 0 && !hideRoadmap && (
         <div className="mb-4 flex gap-2 overflow-x-auto pb-1 print:hidden">
           {sections.map((s) => {
