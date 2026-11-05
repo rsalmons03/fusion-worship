@@ -106,6 +106,22 @@ export default function RehearsalPlayer({
   const [open, setOpen] = useState(true);
   const [showMixer, setShowMixer] = useState(false);
   const [cues, setCues] = useState(false);
+  // Count-in before the song starts: "3, 2, 1" (default), "1, 2, 3, 4", or off. Remembered on this device.
+  const [countIn, setCountIn] = useState<"321" | "1234" | "off">("321");
+  const [counting, setCounting] = useState<string | null>(null);
+  const countAbort = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("fw.countin");
+      if (v === "321" || v === "1234" || v === "off") setCountIn(v);
+    } catch {}
+  }, []);
+  const chooseCountIn = (v: "321" | "1234" | "off") => {
+    setCountIn(v);
+    try {
+      localStorage.setItem("fw.countin", v);
+    } catch {}
+  };
 
   // ── Load audio files for this song ──
   useEffect(() => {
@@ -319,8 +335,8 @@ export default function RehearsalPlayer({
   }, [rate, track, useStems]);
 
   useEffect(() => {
-    if (autoPlay && track) audioRef.current?.play().catch(() => {});
-  }, [autoPlay, track]);
+    if (autoPlay && track) play();
+  }, [autoPlay, track]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Voice cues: say the section name one bar before it starts ──
   const spoken = useRef<Set<number>>(new Set());
@@ -345,6 +361,15 @@ export default function RehearsalPlayer({
   }, [time, cues, playing, marks, bpm, rate, sections]);
 
   function toggleCues() {
+    if (!cues && !marks.length) {
+      return alert(
+        !sections.length
+          ? "This song's chart has no sections yet (Verse 1, Chorus…). Add the lyrics with section names first, or import the ProPresenter file."
+          : canEdit
+          ? "To hear \"Verse 1\", \"Chorus\"… the sections need marking once:\n\n1. Tap Mark sections (bottom right) and press play.\n2. As each part starts, tap its button at the top (V1, C1…).\n3. Tap Done marking.\n\nThen turn on Cues."
+          : "A leader needs to mark this song's sections once (Mark sections) before cues can play."
+      );
+    }
     const on = !cues;
     setCues(on);
     if (on && typeof speechSynthesis !== "undefined") {
@@ -383,14 +408,67 @@ export default function RehearsalPlayer({
     };
   }, [click, bpm]);
 
+  // ── Count-in: clicks at the song's tempo with a spoken count, then the song starts ──
+  function runCountIn(): Promise<boolean> {
+    const words = countIn === "1234" ? ["1", "2", "3", "4"] : ["3", "2", "1"];
+    const spb = (bpm ? 60 / bpm : 1) / rate;
+    const ctx = newAudioContext();
+    const t0 = ctx.currentTime + 0.15;
+    words.forEach((_, i) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.frequency.value = i === 0 ? 1500 : 1000;
+      g.gain.setValueAtTime(0.5, t0 + i * spb);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + i * spb + 0.06);
+      o.connect(g).connect(ctx.destination);
+      o.start(t0 + i * spb);
+      o.stop(t0 + i * spb + 0.07);
+    });
+    const timers: number[] = [];
+    return new Promise((resolve) => {
+      const finish = (ok: boolean) => {
+        timers.forEach(clearTimeout);
+        setCounting(null);
+        countAbort.current = null;
+        setTimeout(() => ctx.close().catch(() => {}), 300);
+        resolve(ok);
+      };
+      countAbort.current = () => {
+        if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
+        finish(false);
+      };
+      words.forEach((w, i) =>
+        timers.push(
+          window.setTimeout(() => {
+            setCounting(w);
+            if (typeof speechSynthesis !== "undefined") {
+              speechSynthesis.cancel();
+              const u = new SpeechSynthesisUtterance(w);
+              u.rate = 1.3;
+              speechSynthesis.speak(u);
+            }
+          }, 150 + i * spb * 1000)
+        )
+      );
+      timers.push(window.setTimeout(() => finish(true), 150 + words.length * spb * 1000));
+    });
+  }
+
   // ── Transport ──
-  function play() {
+  async function play() {
     ensureGraph();
-    audioRef.current?.play().catch(() => {});
+    const a = audioRef.current;
+    if (!a) return;
+    // Count in when starting the song from the top.
+    if (countIn !== "off" && a.currentTime < 0.5) {
+      if (!(await runCountIn())) return;
+    }
+    a.play().catch(() => {});
   }
   function toggle() {
     const a = audioRef.current;
     if (!a) return;
+    if (countAbort.current) return countAbort.current(); // tap again to cancel the count-in
     if (a.paused) play();
     else a.pause();
   }
@@ -595,7 +673,7 @@ export default function RehearsalPlayer({
                 aria-label={playing ? "Pause" : "Play"}
                 className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-accent text-2xl text-white disabled:opacity-40"
               >
-                {playing ? "❚❚" : "▶"}
+                {counting ?? (playing ? "❚❚" : "▶")}
               </button>
               <button className="text-sm font-bold opacity-80 hover:opacity-100 disabled:opacity-30" aria-label="Forward 15 seconds" disabled={!track} onClick={() => skip(15)}>15↻</button>
               {onNextSong ? (
@@ -627,11 +705,20 @@ export default function RehearsalPlayer({
                     ♩ {bpm}
                   </button>
                 ) : null}
-                {marks.length > 0 && (
-                  <button onClick={toggleCues} className={chip(cues)} title="Say each section's name just before it starts">
-                    🗣 Cues
-                  </button>
-                )}
+                <button onClick={toggleCues} className={chip(cues)} title="Say each section's name (Verse 1, Chorus…) just before it starts">
+                  🗣 Cues{!marks.length && " (mark first)"}
+                </button>
+                <select
+                  aria-label="Count-in"
+                  value={countIn}
+                  onChange={(e) => chooseCountIn(e.target.value as "321" | "1234" | "off")}
+                  className="rounded-sm border border-current/20 bg-transparent px-1 py-0.5"
+                  title="Count before the song starts"
+                >
+                  <option value="321" className="text-ink">Count-in: 3-2-1</option>
+                  <option value="1234" className="text-ink">Count-in: 1-2-3-4</option>
+                  <option value="off" className="text-ink">No count-in</option>
+                </select>
                 {tracks.length > 1 && (
                   <select
                     aria-label="Track"
