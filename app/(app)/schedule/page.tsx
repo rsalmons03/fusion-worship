@@ -274,16 +274,23 @@ export default function SchedulePage() {
   }, [assignments, proposed, teamId, positions, roster, people]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
-  // Vocal positions (lead, backup, plain vocals) share one block in the grid.
-  const isVocal = (p: Position) => /vocal|bgv|vox|singer/i.test(p.name);
-  const shortLabel = (p: Position) => (/lead/i.test(p.name) ? "Lead" : /backup|bgv|background/i.test(p.name) ? "Backup" : p.name);
+  // Related positions share one block in the grid: all vocals, all guitars.
+  const BLOCKS = [
+    { key: "vocals", label: "Vocals", test: (p: Position) => /vocal|bgv|vox|singer/i.test(p.name), first: /lead/i },
+    { key: "guitars", label: "Guitars", test: (p: Position) => /guitar|acoustic|electric|\bag\b|\beg\b/i.test(p.name) && !/bass/i.test(p.name), first: /acoustic|\bag\b/i },
+  ];
+  const shortLabel = (p: Position) =>
+    /lead/i.test(p.name) ? "Lead" : /backup|bgv|background/i.test(p.name) ? "Backup" : /acoustic|\bag\b/i.test(p.name) ? "Acoustic" : /electric|\beg\b/i.test(p.name) ? "Electric" : p.name;
   const groups: { key: string; label: string; positions: Position[] }[] = [];
   for (const pos of teamPositions) {
-    if (isVocal(pos)) {
-      if (groups.some((g) => g.key === "vocals")) continue;
-      const vocals = teamPositions.filter(isVocal).sort((a, b) => Number(/lead/i.test(b.name)) - Number(/lead/i.test(a.name)));
-      groups.push({ key: "vocals", label: vocals.length > 1 ? "Vocals" : vocals[0].name, positions: vocals });
-    } else groups.push({ key: pos.id, label: pos.name, positions: [pos] });
+    const block = BLOCKS.find((b) => b.test(pos));
+    if (!block) {
+      groups.push({ key: pos.id, label: pos.name, positions: [pos] });
+      continue;
+    }
+    if (groups.some((g) => g.key === block.key)) continue;
+    const members = teamPositions.filter(block.test).sort((a, b) => Number(block.first.test(b.name)) - Number(block.first.test(a.name)));
+    groups.push({ key: block.key, label: members.length > 1 ? block.label : members[0].name, positions: members });
   }
 
   const posName = (id: string) => positions.find((p) => p.id === id)?.name ?? "";
