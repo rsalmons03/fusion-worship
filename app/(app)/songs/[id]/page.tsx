@@ -176,7 +176,7 @@ export default function SongPage() {
             </div>
             <div>
               <span className="label">Chart: lyrics &amp; chords</span>
-              <ChartEditor value={song.chordpro} onChange={(v) => set("chordpro", v)} songKey={song.default_key} placeholder={SAMPLE} />
+              <ChartEditor value={song.chordpro} onChange={(v) => set("chordpro", v)} songKey={song.default_key} placeholder={SAMPLE} onTitle={(t) => !song.title.trim() && set("title", t)} />
             </div>
             <F label="Arrangement notes"><textarea className="input" rows={2} value={song.notes ?? ""} onChange={(e) => set("notes", e.target.value)} /></F>
             <div className="flex gap-2">

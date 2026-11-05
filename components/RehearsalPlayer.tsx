@@ -42,6 +42,12 @@ export default function RehearsalPlayer({
   canEdit,
   dark = false,
   bottomOffset = 0,
+  onPrevSong,
+  onNextSong,
+  autoPlay = false,
+  bpm,
+  title,
+  hideRoadmap = false,
 }: {
   songId: string;
   chart: string;
@@ -49,6 +55,15 @@ export default function RehearsalPlayer({
   dark?: boolean;
   /** Space to leave below the player (e.g. for the stage view's Prev/Next bar), in px. */
   bottomOffset?: number;
+  /** Set player: go to the previous / next song. `playing` says whether to start it automatically. */
+  onPrevSong?: () => void;
+  onNextSong?: (playing: boolean) => void;
+  autoPlay?: boolean;
+  /** Song tempo for the metronome. */
+  bpm?: number | null;
+  /** Shown in the player bar (set player). */
+  title?: string;
+  hideRoadmap?: boolean;
 }) {
   const sections = useMemo(() => sectionsOf(chart), [chart]);
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -192,6 +207,46 @@ export default function RehearsalPlayer({
     if (audioRef.current) audioRef.current.playbackRate = rate;
   }, [rate, track]);
 
+  useEffect(() => {
+    if (autoPlay && track) audioRef.current?.play().catch(() => {});
+  }, [autoPlay, track]);
+
+  // Metronome: a short click on every beat at the song's tempo.
+  const [click, setClick] = useState(false);
+  useEffect(() => {
+    if (!click || !bpm) return;
+    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new Ctx();
+    const spb = 60 / bpm;
+    let next = ctx.currentTime + 0.1;
+    let beat = 0;
+    const tick = () => {
+      while (next < ctx.currentTime + 0.2) {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.frequency.value = beat % 4 === 0 ? 1500 : 1000;
+        g.gain.setValueAtTime(0.4, next);
+        g.gain.exponentialRampToValueAtTime(0.001, next + 0.05);
+        o.connect(g).connect(ctx.destination);
+        o.start(next);
+        o.stop(next + 0.06);
+        next += spb;
+        beat++;
+      }
+    };
+    const id = window.setInterval(tick, 50);
+    tick();
+    return () => {
+      window.clearInterval(id);
+      ctx.close();
+    };
+  }, [click, bpm]);
+
+  function skip(sec: number) {
+    const a = audioRef.current;
+    if (a) a.currentTime = Math.max(0, Math.min((a.duration || 0) - 0.1, a.currentTime + sec));
+  }
+
   function scrollTo(n: number) {
     document.getElementById(`sec-${n}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -243,20 +298,20 @@ export default function RehearsalPlayer({
 
   // Leave room at the bottom of the page so the player bar doesn't cover the end of the chart.
   useEffect(() => {
-    if (!track) return;
+    if (!track && !onNextSong && !onPrevSong) return;
     const prev = document.body.style.paddingBottom;
-    document.body.style.paddingBottom = `${(open ? 190 : 110) + bottomOffset}px`;
+    document.body.style.paddingBottom = `${(open ? 230 : 130) + bottomOffset}px`;
     return () => {
       document.body.style.paddingBottom = prev;
     };
-  }, [track, open, bottomOffset]);
+  }, [track, open, bottomOffset, onNextSong, onPrevSong]);
 
   const styles = dark ? KIND_STYLE_DARK : KIND_STYLE;
   const bar = dark ? "bg-stone-900 border-stone-700 text-white" : "bg-white border-line text-ink";
 
   return (
     <>
-      {sections.length > 0 && (
+      {sections.length > 0 && !hideRoadmap && (
         <div className="mb-4 flex gap-2 overflow-x-auto pb-1 print:hidden">
           {sections.map((s) => {
             const marked = track?.markers?.[s.n] !== undefined;
@@ -277,17 +332,19 @@ export default function RehearsalPlayer({
         </div>
       )}
 
-      {track && (
+      {(track || onNextSong || onPrevSong) && (
         <>
           <div style={{ bottom: bottomOffset }} className={`fixed inset-x-0 z-30 border-t shadow-[0_-4px_16px_rgba(0,0,0,0.08)] print:hidden ${bar}`}>
             <button className="mx-auto block w-16 py-1.5" onClick={() => setOpen(!open)} aria-label={open ? "Collapse player" : "Expand player"}>
               <span className="block h-1 rounded-full bg-current opacity-30" />
             </button>
             <div className="mx-auto max-w-3xl px-4 pb-4">
-              {open && (
+              {title && <div className="mb-1 truncate font-display text-sm font-bold">{title}</div>}
+              {!track && <p className="mb-2 text-xs opacity-70">No audio uploaded for this song.</p>}
+              {open && track && (
                 <canvas ref={canvasRef} onClick={seek} className="mb-2 h-14 w-full cursor-pointer" aria-label="Waveform: tap to seek" />
               )}
-              <audio
+              {track && <audio
                 ref={audioRef}
                 src={track.url}
                 preload="metadata"
@@ -296,43 +353,70 @@ export default function RehearsalPlayer({
                 onPause={() => setPlaying(false)}
                 onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
                 onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-                onEnded={() => setPlaying(false)}
-              />
-              <div className="flex items-center gap-3">
-                <span className="w-20 font-mono text-xs tabular-nums opacity-70">{fmt(time)} / {fmt(duration)}</span>
-                <button className="text-xl opacity-80 hover:opacity-100" aria-label="Back to start" onClick={() => audioRef.current && (audioRef.current.currentTime = 0)}>⏮</button>
+                onEnded={() => {
+                  setPlaying(false);
+                  if (loop === "off") onNextSong?.(true);
+                }}
+              />}
+              <div className="mb-1 flex justify-between font-mono text-[11px] tabular-nums opacity-60">
+                <span>{fmt(time)}</span>
+                <span>{fmt(duration)}</span>
+              </div>
+              <div className="flex items-center justify-center gap-5">
+                {onPrevSong ? (
+                  <button className="text-2xl opacity-80 hover:opacity-100" aria-label="Previous song" onClick={onPrevSong}>⏮</button>
+                ) : (
+                  <button className="text-2xl opacity-80 hover:opacity-100" aria-label="Back to start" onClick={() => audioRef.current && (audioRef.current.currentTime = 0)}>⏮</button>
+                )}
+                <button className="text-sm font-bold opacity-80 hover:opacity-100 disabled:opacity-30" aria-label="Back 15 seconds" disabled={!track} onClick={() => skip(-15)}>↺15</button>
                 <button
+                  disabled={!track}
                   onClick={toggle}
                   aria-label={playing ? "Pause" : "Play"}
-                  className="grid h-12 w-12 place-items-center rounded-full bg-accent text-xl text-white"
+                  className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-accent text-2xl text-white disabled:opacity-40"
                 >
                   {playing ? "❚❚" : "▶"}
                 </button>
-                <button
-                  onClick={() => setLoop(loop === "off" ? "song" : loop === "song" && marks.length ? "section" : "off")}
-                  className={`rounded-sm px-2 py-1 text-xs font-bold uppercase ${loop !== "off" ? "bg-accent text-white" : "opacity-70"}`}
-                  title="Loop off / whole song / current section"
-                >
-                  {loop === "off" ? "Loop" : loop === "song" ? "Loop song" : "Loop section"}
-                </button>
-                <select
-                  aria-label="Speed"
-                  value={rate}
-                  onChange={(e) => setRate(Number(e.target.value))}
-                  className="ml-auto rounded-sm border border-current/20 bg-transparent px-1 py-0.5 text-xs"
-                >
-                  {[0.5, 0.75, 0.9, 1].map((r) => <option key={r} value={r} className="text-ink">{r === 1 ? "1×" : `${r}×`}</option>)}
-                </select>
+                <button className="text-sm font-bold opacity-80 hover:opacity-100 disabled:opacity-30" aria-label="Forward 15 seconds" disabled={!track} onClick={() => skip(15)}>15↻</button>
+                {onNextSong ? (
+                  <button className="text-2xl opacity-80 hover:opacity-100" aria-label="Next song" onClick={() => onNextSong(playing)}>⏭</button>
+                ) : (
+                  <span className="w-6" />
+                )}
               </div>
               {open && (
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                  {tracks.length > 1 && (
-                    <select aria-label="Track" value={trackIdx} onChange={(e) => setTrackIdx(Number(e.target.value))} className="rounded-sm border border-current/20 bg-transparent px-1 py-0.5">
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                  <button
+                    onClick={() => setLoop(loop === "off" ? "song" : loop === "song" && marks.length ? "section" : "off")}
+                    className={`rounded-sm px-2 py-1 font-bold uppercase ${loop !== "off" ? "bg-accent text-white" : "opacity-70 hover:opacity-100"}`}
+                    title="Loop off / whole song / current section"
+                  >
+                    {loop === "off" ? "Loop" : loop === "song" ? "Loop song" : "Loop section"}
+                  </button>
+                  <select
+                    aria-label="Speed"
+                    value={rate}
+                    onChange={(e) => setRate(Number(e.target.value))}
+                    className="rounded-sm border border-current/20 bg-transparent px-1 py-0.5"
+                  >
+                    {[0.5, 0.75, 0.9, 1].map((r) => <option key={r} value={r} className="text-ink">{r === 1 ? "1× speed" : `${r}×`}</option>)}
+                  </select>
+                  {bpm ? (
+                    <button
+                      onClick={() => setClick(!click)}
+                      className={`rounded-sm px-2 py-1 font-bold uppercase ${click ? "bg-accent text-white" : "opacity-70 hover:opacity-100"}`}
+                      title="Metronome"
+                    >
+                      ♩ {bpm}
+                    </button>
+                  ) : null}
+                  {track && tracks.length > 1 && (
+                    <select aria-label="Track" value={trackIdx} onChange={(e) => setTrackIdx(Number(e.target.value))} className="max-w-[9rem] rounded-sm border border-current/20 bg-transparent px-1 py-0.5">
                       {tracks.map((t, i) => <option key={t.id} value={i} className="text-ink">{t.name}</option>)}
                     </select>
                   )}
-                  {tracks.length === 1 && <span className="opacity-60">{track.name}</span>}
-                  {canEdit && markersOk && sections.length > 0 && (
+                  {track && tracks.length === 1 && <span className="max-w-[8rem] truncate opacity-60">{track.name}</span>}
+                  {canEdit && markersOk && track && sections.length > 0 && (
                     <>
                       <button
                         onClick={() => setMarking(!marking)}

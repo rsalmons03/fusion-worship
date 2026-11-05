@@ -202,7 +202,8 @@ export default function PlanPage() {
           </p>
         </div>
         <div className="flex gap-2 print:hidden">
-          <Link href={`/live/${plan.id}`} className="btn">Stage view</Link>
+          <Link href={`/plans/${plan.id}/player`} className="btn">▶ Rehearse</Link>
+          <Link href={`/live/${plan.id}`} className="btn-secondary">Stage view</Link>
           <button className="btn-secondary" onClick={() => window.print()}>Print</button>
           {canEdit && <button className="btn-secondary text-bad" onClick={deletePlan}>Delete</button>}
         </div>

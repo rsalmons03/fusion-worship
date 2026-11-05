@@ -1,6 +1,7 @@
 "use client";
 import { useRef } from "react";
 import { chordsInKey, chordsOverLyricsToChordPro, isChordLine } from "@/lib/chordpro";
+import { proToChart } from "@/lib/propresenter";
 
 const SECTIONS = ["Intro", "Verse 1", "Verse 2", "Pre-Chorus", "Chorus", "Bridge", "Tag", "Instrumental", "Outro"];
 
@@ -10,11 +11,14 @@ export default function ChartEditor({
   onChange,
   songKey,
   placeholder,
+  onTitle,
 }: {
   value: string;
   onChange: (v: string) => void;
   songKey: string | null | undefined;
   placeholder?: string;
+  /** Called with the song title found in an imported file. */
+  onTitle?: (title: string) => void;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
@@ -42,6 +46,15 @@ export default function ChartEditor({
     if (!text || !text.split("\n").some((l) => isChordLine(l) && !/\[/.test(l))) return;
     e.preventDefault();
     insert(chordsOverLyricsToChordPro(text));
+  }
+
+  async function importPro(file: File | undefined) {
+    if (!file) return;
+    const res = proToChart(new Uint8Array(await file.arrayBuffer()));
+    if (!res) return alert("Couldn't find any lyrics in that file. It needs to be a ProPresenter 7 (.pro) song.");
+    if (value.trim() && !confirm("Replace the current chart with the lyrics from this ProPresenter file?")) return;
+    onChange(res.chart);
+    if (res.title) onTitle?.(res.title);
   }
 
   const hasChordLines = value.split("\n").some((l) => isChordLine(l) && !/\[/.test(l));
@@ -87,6 +100,10 @@ export default function ChartEditor({
           <button type="button" className="btn" onClick={() => onChange(chordsOverLyricsToChordPro(value))}>Convert</button>
         </div>
       )}
+      <label className="btn-secondary cursor-pointer">
+        Import lyrics from ProPresenter (.pro)
+        <input type="file" accept=".pro" hidden onChange={(e) => { importPro(e.target.files?.[0]); e.target.value = ""; }} />
+      </label>
       <p className="text-xs text-muted">
         Tip: paste a chord chart from anywhere (chords on the line above the words) and it&apos;s lined up automatically.
         Put the cursor just before a word, then tap a chord.

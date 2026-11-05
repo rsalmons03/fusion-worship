@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { AUDIO_EXT, fileExt, isAudio } from "@/lib/media";
+import { fileExt, fileIcon } from "@/lib/media";
 
 type SongFile = { id: string; name: string; path: string };
 
@@ -25,13 +25,9 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
     if (!list?.length) return;
     setBusy(true);
     for (const f of Array.from(list)) {
-      const ext = fileExt(f.name);
-      if (ext !== "pdf" && !AUDIO_EXT.includes(ext)) {
-        alert(`${f.name}: upload a PDF chart or an audio file (${AUDIO_EXT.join(", ")}).`);
-        continue;
-      }
+      const ext = fileExt(f.name).replace(/[^a-z0-9]/g, "") || "bin";
       if (f.size > 50 * 1024 * 1024) {
-        alert(`${f.name} is over 50 MB. Try a smaller MP3.`);
+        alert(`${f.name} is over 50 MB. Try a smaller file.`);
         continue;
       }
       const path = `${songId}/${crypto.randomUUID()}.${ext}`;
@@ -40,7 +36,7 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
         alert(`${f.name}: ${up.error.message}`);
         continue;
       }
-      const name = f.name.replace(/\.[^.]+$/, "");
+      const name = ext === "pro" ? f.name : f.name.replace(/\.[^.]+$/, "");
       const { error } = await supabase.from("song_files").insert({ song_id: songId, name, path });
       if (error) alert(error.message);
     }
@@ -78,12 +74,12 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
   if (unavailable) return null;
   return (
     <div className="card text-sm">
-      <div className="label">Charts &amp; audio files</div>
-      {files.length === 0 && <p className="mt-1 text-muted">None yet.{canEdit && " Upload PDF charts (e.g. from ChartBuilder) or MP3s."}</p>}
+      <div className="label">Files</div>
+      {files.length === 0 && <p className="mt-1 text-muted">None yet.{canEdit && " Upload PDF charts, MP3s, ProPresenter files…"}</p>}
       <ul className="mt-2 space-y-1">
         {files.map((f) => (
           <li key={f.id} className="flex items-center gap-2">
-            <button className="flex-1 truncate text-left text-accent hover:underline" onClick={() => open(f)}>{isAudio(f.path) ? "🎵" : "📄"} {f.name}</button>
+            <button className="flex-1 truncate text-left text-accent hover:underline" onClick={() => open(f)}>{fileIcon(f.path)} {f.name}</button>
             {canEdit && (
               <>
                 <button className="btn-ghost text-xs" onClick={() => rename(f)}>Rename</button>
@@ -95,8 +91,8 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
       </ul>
       {canEdit && (
         <label className="btn-secondary mt-3 w-full cursor-pointer">
-          {busy ? "Uploading…" : "Upload PDF or MP3"}
-          <input type="file" accept="application/pdf,.pdf,audio/*,.mp3,.m4a,.wav,.aac,.ogg" multiple hidden disabled={busy} onChange={(e) => upload(e.target.files)} />
+          {busy ? "Uploading…" : "Upload files"}
+          <input type="file" multiple hidden disabled={busy} onChange={(e) => upload(e.target.files)} />
         </label>
       )}
     </div>

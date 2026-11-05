@@ -51,3 +51,12 @@ export function fileExt(path: string) {
 export function isAudio(path: string) {
   return AUDIO_EXT.includes(fileExt(path));
 }
+
+export function fileIcon(path: string) {
+  const e = fileExt(path);
+  if (isAudio(path)) return "🎵";
+  if (e === "pdf") return "📄";
+  if (e === "pro") return "🖥";
+  if (["png", "jpg", "jpeg", "gif", "webp", "heic"].includes(e)) return "🖼";
+  return "📎";
+}

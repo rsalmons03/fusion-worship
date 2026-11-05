@@ -89,7 +89,7 @@ export default function Home() {
                   </div>
                   <StatusChip status={a.status} />
                   {a.status === "accepted" && (
-                    <Link href={`/live/${a.plan_id}`} className="btn-ghost">Stage view</Link>
+                    <Link href={`/plans/${a.plan_id}/player`} className="btn-ghost">▶ Rehearse</Link>
                   )}
                 </li>
               ))}
