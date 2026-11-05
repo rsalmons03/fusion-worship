@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useLocations, useProfile } from "@/components/ProfileContext";
 import StatusChip from "@/components/StatusChip";
+import SongListen from "@/components/SongListen";
 import { KEYS } from "@/lib/chordpro";
 import { addMinutes, fmtDate, fmtTime, planLabel } from "@/lib/format";
 import type {
@@ -46,7 +47,7 @@ export default function PlanPage() {
   const [sending, setSending] = useState(false);
 
   const loadItems = useCallback(async () => {
-    const { data } = await supabase.from("plan_items").select("*").eq("plan_id", planId).order("position");
+    const { data } = await supabase.from("plan_items").select("*, songs(reference_url)").eq("plan_id", planId).order("position");
     setItems((data ?? []) as PlanItem[]);
   }, [planId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -362,6 +363,7 @@ function ItemRow({
   onRemove: () => void;
   onMove: (d: -1 | 1) => void;
 }) {
+  const [listening, setListening] = useState(false);
   if (item.kind === "header") {
     return (
       <li className="flex items-center gap-2 border-b border-line bg-stone-50 px-4 py-2">
@@ -401,6 +403,16 @@ function ItemRow({
           <input className="w-full bg-transparent text-sm text-muted outline-none placeholder:text-stone-300" placeholder="Notes (who's leading, transitions, cues)…" defaultValue={item.description ?? ""} onBlur={(e) => e.target.value !== (item.description ?? "") && onSave({ description: e.target.value || null })} />
         ) : (
           item.description && <p className="text-sm text-muted">{item.description}</p>
+        )}
+        {item.song_id && (
+          <button className="btn-ghost -ml-2 text-xs print:hidden" onClick={() => setListening(!listening)}>
+            {listening ? "▾ Hide player" : "▶ Listen"}
+          </button>
+        )}
+        {item.song_id && listening && (
+          <div className="pt-1 print:hidden">
+            <SongListen songId={item.song_id} referenceUrl={(item as PlanItem & { songs?: { reference_url: string | null } | null }).songs?.reference_url} showEmptyNote />
+          </div>
         )}
       </div>
       <div className="flex shrink-0 items-start gap-1">

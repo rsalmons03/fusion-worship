@@ -7,6 +7,7 @@ import { useProfile } from "@/components/ProfileContext";
 import ChordSheet from "@/components/ChordSheet";
 import ChartEditor from "@/components/ChartEditor";
 import SongFiles from "@/components/SongFiles";
+import SongListen from "@/components/SongListen";
 import { KEYS, keyFromSource, prefersFlats, semitonesBetween, transposeKey } from "@/lib/chordpro";
 import { fmtDate } from "@/lib/format";
 import type { Song } from "@/lib/types";
@@ -47,6 +48,7 @@ export default function SongPage() {
   const [viewKey, setViewKey] = useState("");
   const [view, setView] = useState<"chords" | "numbers" | "lyrics">("chords");
   const [hadMt, setHadMt] = useState(false);
+  const [filesVersion, setFilesVersion] = useState(0);
   const [history, setHistory] = useState<{ plan_id: string; date: string; key: string | null }[]>([]);
 
   useEffect(() => {
@@ -165,7 +167,7 @@ export default function SongPage() {
               <F label="CCLI #"><input className="input" value={song.ccli ?? ""} onChange={(e) => set("ccli", e.target.value)} /></F>
               <F label="Themes"><input className="input" placeholder="grace, communion, easter" value={song.themes ?? ""} onChange={(e) => set("themes", e.target.value)} /></F>
               <div className="sm:col-span-2">
-                <F label="Reference link (YouTube, Spotify…)"><input className="input" value={song.reference_url ?? ""} onChange={(e) => set("reference_url", e.target.value)} /></F>
+                <F label="Listen link (YouTube, Spotify, Apple Music, SoundCloud)"><input className="input" value={song.reference_url ?? ""} onChange={(e) => set("reference_url", e.target.value)} /></F>
               </div>
               <div className="sm:col-span-2">
                 <F label="MultiTracks / ChartBuilder link"><input className="input" placeholder="Paste the song's MultiTracks link" value={song.multitracks_url ?? ""} onChange={(e) => set("multitracks_url", e.target.value)} /></F>
@@ -216,10 +218,13 @@ export default function SongPage() {
             {song.multitracks_url && (
               <a href={song.multitracks_url} target="_blank" rel="noreferrer" className="btn w-full">Open in MultiTracks</a>
             )}
-            {!isNew && <SongFiles songId={params.id} canEdit={canEdit} />}
-            {song.reference_url && (
-              <a href={song.reference_url} target="_blank" rel="noreferrer" className="card block text-sm text-accent hover:underline">▶ Listen / reference</a>
+            {!isNew && (
+              <div className="card">
+                <div className="label mb-2">Listen</div>
+                <SongListen key={filesVersion} songId={params.id} referenceUrl={song.reference_url} showEmptyNote />
+              </div>
             )}
+            {!isNew && <SongFiles songId={params.id} canEdit={canEdit} onChange={() => setFilesVersion((v) => v + 1)} />}
             {song.notes && <div className="card whitespace-pre-wrap text-sm"><div className="label">Notes</div>{song.notes}</div>}
             <div className="card text-sm">
               <div className="label">Used in {history.length} plan{history.length === 1 ? "" : "s"}</div>

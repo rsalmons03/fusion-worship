@@ -4,11 +4,12 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import ChordSheet from "@/components/ChordSheet";
+import SongListen from "@/components/SongListen";
 import { prefersFlats, semitonesBetween, transposeKey } from "@/lib/chordpro";
 import { fmtDate, fmtTime, planLabel } from "@/lib/format";
 import type { Plan, PlanItem, Song } from "@/lib/types";
 
-type Item = PlanItem & { songs: Pick<Song, "chordpro" | "default_key" | "author" | "bpm" | "meter"> | null };
+type Item = PlanItem & { songs: Pick<Song, "chordpro" | "default_key" | "author" | "bpm" | "meter" | "reference_url"> | null };
 
 // Full-screen setlist for musicians and vocalists on a phone/tablet/stand.
 export default function LiveView() {
@@ -21,6 +22,7 @@ export default function LiveView() {
   const [size, setSize] = useState(20);
   const [dark, setDark] = useState(true);
   const [numbers, setNumbers] = useState(false);
+  const [listen, setListen] = useState(false);
 
   useEffect(() => {
     try {
@@ -34,7 +36,7 @@ export default function LiveView() {
     supabase.from("plans").select("*").eq("id", params.id).maybeSingle().then(({ data }) => setPlan(data as Plan));
     supabase
       .from("plan_items")
-      .select("*, songs(chordpro, default_key, author, bpm, meter)")
+      .select("*, songs(chordpro, default_key, author, bpm, meter, reference_url)")
       .eq("plan_id", params.id)
       .order("position")
       .then(({ data }) => setItems(((data ?? []) as Item[]).filter((i) => i.kind !== "header")));
@@ -112,6 +114,18 @@ export default function LiveView() {
               </span>
             )}
           </div>
+          {item.song_id && (
+            <div className="mb-4">
+              <button className="rounded border border-current/30 px-3 py-1 text-sm opacity-80 hover:opacity-100" onClick={() => setListen(!listen)}>
+                {listen ? "▾ Hide player" : "▶ Listen"}
+              </button>
+              {listen && (
+                <div className="mt-3">
+                  <SongListen key={item.song_id} songId={item.song_id} referenceUrl={item.songs?.reference_url} dark={dark} showEmptyNote />
+                </div>
+              )}
+            </div>
+          )}
           {item.description && <p className="mb-4 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">{item.description}</p>}
           {item.songs ? (
             <ChordSheet source={item.songs.chordpro} semis={semis} flats={prefersFlats(shownKey)} showChords={chords} fontSize={size} dark={dark} numbersKey={numbers ? item.songs.default_key : null} />

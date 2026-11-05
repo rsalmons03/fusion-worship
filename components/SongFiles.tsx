@@ -1,11 +1,12 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { AUDIO_EXT, fileExt, isAudio } from "@/lib/media";
 
 type SongFile = { id: string; name: string; path: string };
 
-/** PDF charts (e.g. exported from MultiTracks ChartBuilder) attached to a song. */
-export default function SongFiles({ songId, canEdit }: { songId: string; canEdit: boolean }) {
+/** PDF charts (e.g. exported from MultiTracks ChartBuilder) and audio files attached to a song. */
+export default function SongFiles({ songId, canEdit, onChange }: { songId: string; canEdit: boolean; onChange?: () => void }) {
   const supabase = createClient();
   const [files, setFiles] = useState<SongFile[]>([]);
   const [busy, setBusy] = useState(false);
@@ -24,22 +25,28 @@ export default function SongFiles({ songId, canEdit }: { songId: string; canEdit
     if (!list?.length) return;
     setBusy(true);
     for (const f of Array.from(list)) {
-      if (f.type !== "application/pdf" && !f.name.toLowerCase().endsWith(".pdf")) {
-        alert(`${f.name} isn't a PDF.`);
+      const ext = fileExt(f.name);
+      if (ext !== "pdf" && !AUDIO_EXT.includes(ext)) {
+        alert(`${f.name}: upload a PDF chart or an audio file (${AUDIO_EXT.join(", ")}).`);
         continue;
       }
-      const path = `${songId}/${crypto.randomUUID()}.pdf`;
-      const up = await supabase.storage.from("charts").upload(path, f, { contentType: "application/pdf" });
+      if (f.size > 50 * 1024 * 1024) {
+        alert(`${f.name} is over 50 MB. Try a smaller MP3.`);
+        continue;
+      }
+      const path = `${songId}/${crypto.randomUUID()}.${ext}`;
+      const up = await supabase.storage.from("charts").upload(path, f, { contentType: f.type || undefined });
       if (up.error) {
         alert(`${f.name}: ${up.error.message}`);
         continue;
       }
-      const name = f.name.replace(/\.pdf$/i, "");
+      const name = f.name.replace(/\.[^.]+$/, "");
       const { error } = await supabase.from("song_files").insert({ song_id: songId, name, path });
       if (error) alert(error.message);
     }
     setBusy(false);
     load();
+    onChange?.();
   }
 
   async function open(f: SongFile) {
@@ -58,6 +65,7 @@ export default function SongFiles({ songId, canEdit }: { songId: string; canEdit
     await supabase.storage.from("charts").remove([f.path]);
     await supabase.from("song_files").delete().eq("id", f.id);
     load();
+    onChange?.();
   }
 
   async function rename(f: SongFile) {
@@ -70,12 +78,12 @@ export default function SongFiles({ songId, canEdit }: { songId: string; canEdit
   if (unavailable) return null;
   return (
     <div className="card text-sm">
-      <div className="label">PDF charts</div>
-      {files.length === 0 && <p className="mt-1 text-muted">None yet.{canEdit && " Upload charts exported from ChartBuilder."}</p>}
+      <div className="label">Charts &amp; audio files</div>
+      {files.length === 0 && <p className="mt-1 text-muted">None yet.{canEdit && " Upload PDF charts (e.g. from ChartBuilder) or MP3s."}</p>}
       <ul className="mt-2 space-y-1">
         {files.map((f) => (
           <li key={f.id} className="flex items-center gap-2">
-            <button className="flex-1 truncate text-left text-accent hover:underline" onClick={() => open(f)}>📄 {f.name}</button>
+            <button className="flex-1 truncate text-left text-accent hover:underline" onClick={() => open(f)}>{isAudio(f.path) ? "🎵" : "📄"} {f.name}</button>
             {canEdit && (
               <>
                 <button className="btn-ghost text-xs" onClick={() => rename(f)}>Rename</button>
@@ -87,8 +95,8 @@ export default function SongFiles({ songId, canEdit }: { songId: string; canEdit
       </ul>
       {canEdit && (
         <label className="btn-secondary mt-3 w-full cursor-pointer">
-          {busy ? "Uploading…" : "Upload PDF"}
-          <input type="file" accept="application/pdf,.pdf" multiple hidden disabled={busy} onChange={(e) => upload(e.target.files)} />
+          {busy ? "Uploading…" : "Upload PDF or MP3"}
+          <input type="file" accept="application/pdf,.pdf,audio/*,.mp3,.m4a,.wav,.aac,.ogg" multiple hidden disabled={busy} onChange={(e) => upload(e.target.files)} />
         </label>
       )}
     </div>
