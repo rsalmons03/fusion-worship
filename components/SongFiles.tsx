@@ -13,6 +13,50 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
   const [files, setFiles] = useState<SongFile[]>([]);
   const [busy, setBusy] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
+  const [split, setSplit] = useState<{ jobId: string; status: string; started: number } | null>(null);
+
+  // Keep checking a running split until the stems are saved.
+  useEffect(() => {
+    if (!split || ["done", "failed"].includes(split.status)) return;
+    const t = window.setTimeout(async () => {
+      const res = await fetch(`/api/stems?job=${split.jobId}`);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setSplit(null);
+        return alert(body.error ?? "Could not check the split");
+      }
+      setSplit({ ...split, status: body.status });
+      if (body.status === "done") {
+        load();
+        onChange?.();
+        alert(`Done! ${body.saved ?? ""} parts were added as stems. The mixer is in the player at the bottom.`);
+      } else if (body.status === "failed") alert(`Splitting failed: ${body.error ?? "unknown error"}`);
+    }, 5000);
+    return () => window.clearTimeout(t);
+  }, [split]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pick up a split that was still running when the page was left.
+  useEffect(() => {
+    if (!canEdit) return;
+    supabase
+      .from("stem_jobs")
+      .select("id,status,created_at")
+      .eq("song_id", songId)
+      .not("status", "in", "(done,failed)")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .then(({ data, error }) => {
+        if (!error && data?.[0]) setSplit({ jobId: data[0].id, status: data[0].status, started: new Date(data[0].created_at).getTime() });
+      });
+  }, [songId, canEdit]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function splitFile(f: SongFile) {
+    if (!confirm(`Split "${f.name}" into parts (vocals, drums, bass, guitar, keys, other)?\n\nThis uses the paid splitting service (usually a few cents) and takes about 1–3 minutes. The original stays.`)) return;
+    const res = await fetch("/api/stems", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fileId: f.id }) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return alert(body.error ?? "Could not start splitting");
+    setSplit({ jobId: body.jobId, status: body.status ?? "starting", started: Date.now() });
+  }
 
   const load = useCallback(async () => {
     const { data, error } = await supabase.from("song_files").select("*").eq("song_id", songId).order("name");
@@ -86,6 +130,14 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
     return (
       <div className="card border-amber-300 bg-amber-50 text-sm">
         <div className="label">Files</div>
+      {split && !["done", "failed"].includes(split.status) && (
+        <div className="mt-2 flex items-center gap-2 rounded-md bg-accent-soft px-3 py-2 text-sm">
+          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+          <span className="flex-1">
+            Splitting into stems… {split.status === "importing" ? "saving the parts" : split.status === "processing" ? "working" : "starting"} ({Math.max(0, Math.round((Date.now() - split.started) / 1000))}s, usually 1–3 min). You can leave this page.
+          </span>
+        </div>
+      )}
         <p>File uploads aren&apos;t switched on yet. Run the database update <b>003_charts_trainings.sql</b> in Supabase, then reload.</p>
       </div>
     );
@@ -100,6 +152,11 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
         {files.map((f) => (
           <li key={f.id} className="flex items-center gap-2">
             <button className="flex-1 truncate text-left text-accent hover:underline" onClick={() => open(f)}>{fileIcon(f.path)} {f.name}</button>
+            {canEdit && isAudio(f.path) && !f.is_stem && !split && (
+              <button className="rounded-sm border border-accent px-1.5 py-0.5 text-[10px] font-bold uppercase text-accent hover:bg-accent hover:text-white" onClick={() => splitFile(f)} title="Split into vocals, drums, bass, guitar, keys and other">
+                ✂ Split
+              </button>
+            )}
             {isAudio(f.path) && f.is_stem !== undefined && (canEdit ? (
               <button
                 className={`rounded-sm px-1.5 py-0.5 text-[10px] font-bold uppercase ${f.is_stem ? "bg-accent text-white" : "border border-line text-muted"}`}

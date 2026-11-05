@@ -564,3 +564,20 @@ where t.name ilike 'worship%band%' and not exists (select 1 from positions p whe
 
 -- ───────────────────────── Position levels (main / half / only if needed) ─────────────────────────
 alter table position_members add column if not exists weight numeric not null default 1 check (weight >= 0 and weight <= 1);
+
+-- ───────────────────────── Stem-splitting jobs ─────────────────────────
+create table if not exists stem_jobs (
+  id uuid primary key default gen_random_uuid(),
+  song_id uuid not null references songs on delete cascade,
+  file_id uuid not null references song_files on delete cascade,
+  prediction_id text,
+  status text not null default 'starting', -- starting | processing | succeeded | importing | done | failed
+  error text,
+  created_by uuid references profiles on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists stem_jobs_song_idx on stem_jobs (song_id, created_at desc);
+alter table stem_jobs enable row level security;
+drop policy if exists "stem_jobs read" on stem_jobs;
+create policy "stem_jobs read" on stem_jobs for select using (is_leader());
