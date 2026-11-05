@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import ChordSheet from "@/components/ChordSheet";
 import SongListen from "@/components/SongListen";
+import RehearsalPlayer from "@/components/RehearsalPlayer";
 import { prefersFlats, semitonesBetween, transposeKey } from "@/lib/chordpro";
 import { fmtDate, fmtTime, planLabel } from "@/lib/format";
 import type { Plan, PlanItem, Song } from "@/lib/types";
@@ -121,12 +122,15 @@ export default function LiveView() {
               </button>
               {listen && (
                 <div className="mt-3">
-                  <SongListen key={item.song_id} songId={item.song_id} referenceUrl={item.songs?.reference_url} dark={dark} showEmptyNote />
+                  <SongListen key={item.song_id} songId={item.song_id} referenceUrl={item.songs?.reference_url} dark={dark} audio={false} showEmptyNote />
                 </div>
               )}
             </div>
           )}
           {item.description && <p className="mb-4 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">{item.description}</p>}
+          {item.songs && item.song_id && (
+            <RehearsalPlayer key={item.song_id} songId={item.song_id} chart={item.songs.chordpro} canEdit={false} dark={dark} bottomOffset={60} />
+          )}
           {item.songs ? (
             <ChordSheet source={item.songs.chordpro} semis={semis} flats={prefersFlats(shownKey)} showChords={chords} fontSize={size} dark={dark} numbersKey={numbers ? item.songs.default_key : null} />
           ) : (

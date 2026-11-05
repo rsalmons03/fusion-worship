@@ -8,6 +8,7 @@ import ChordSheet from "@/components/ChordSheet";
 import ChartEditor from "@/components/ChartEditor";
 import SongFiles from "@/components/SongFiles";
 import SongListen from "@/components/SongListen";
+import RehearsalPlayer from "@/components/RehearsalPlayer";
 import { KEYS, keyFromSource, prefersFlats, semitonesBetween, transposeKey } from "@/lib/chordpro";
 import { fmtDate } from "@/lib/format";
 import type { Song } from "@/lib/types";
@@ -212,6 +213,7 @@ export default function SongPage() {
               </div>
               <button className="btn-ghost" onClick={() => window.print()}>Print</button>
             </div>
+            <RehearsalPlayer key={filesVersion} songId={params.id} chart={song.chordpro} canEdit={canEdit} />
             <ChordSheet source={song.chordpro} semis={semis} flats={flats} showChords={view !== "lyrics"} numbersKey={view === "numbers" ? song.default_key : null} />
           </div>
           <aside className="space-y-4">
@@ -221,7 +223,8 @@ export default function SongPage() {
             {!isNew && (
               <div className="card">
                 <div className="label mb-2">Listen</div>
-                <SongListen key={filesVersion} songId={params.id} referenceUrl={song.reference_url} showEmptyNote />
+                <SongListen songId={params.id} referenceUrl={song.reference_url} audio={false} />
+                <p className="mt-2 text-xs text-muted">Uploaded MP3s play in the player bar at the bottom of the screen.</p>
               </div>
             )}
             {!isNew && <SongFiles songId={params.id} canEdit={canEdit} onChange={() => setFilesVersion((v) => v + 1)} />}

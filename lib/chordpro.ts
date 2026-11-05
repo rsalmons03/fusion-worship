@@ -226,3 +226,39 @@ export function chordsInKey(key: string | null | undefined): string[] {
   if (k.minor) return [n(0) + "m", n(3), n(5) + "m", n(7) + "m", n(8), n(10), n(7), n(3) + "/" + n(7)];
   return [n(0), n(2) + "m", n(4) + "m", n(5), n(7), n(9) + "m", n(10), n(0) + "/" + n(4), n(7) + "/" + n(11), n(5) + "/" + n(9), n(7) + "sus", n(2)];
 }
+
+// ───────────── Section roadmap ─────────────
+
+export type SectionInfo = { n: number; label: string; abbr: string; kind: string };
+
+const ABBR: [RegExp, string, string][] = [
+  [/^pre-?chorus/i, "PC", "prechorus"],
+  [/^chorus/i, "C", "chorus"],
+  [/^verse/i, "V", "verse"],
+  [/^bridge/i, "B", "bridge"],
+  [/^tag/i, "Tg", "tag"],
+  [/^interlude/i, "It", "inst"],
+  [/^instrumental/i, "Ins", "inst"],
+  [/^intro/i, "In", "inst"],
+  [/^outro/i, "Out", "inst"],
+  [/^ending/i, "End", "inst"],
+  [/^turnaround/i, "TA", "inst"],
+  [/^vamp/i, "Vp", "bridge"],
+  [/^refrain/i, "R", "chorus"],
+  [/^coda/i, "Co", "inst"],
+];
+
+/** Sections of a chart in order (repeats included), with short names like V1, C1, B. */
+export function sectionsOf(src: string): SectionInfo[] {
+  const out: SectionInfo[] = [];
+  let n = 0;
+  for (const l of parseChordPro(src)) {
+    if (l.type !== "section") continue;
+    const label = l.label;
+    const hit = ABBR.find(([re]) => re.test(label.trim()));
+    const num = label.match(/(\d+)/)?.[1] ?? "";
+    const abbr = hit ? hit[1] + num : label.replace(/[^A-Za-z0-9]/g, "").slice(0, 3);
+    out.push({ n: n++, label, abbr, kind: hit?.[2] ?? "other" });
+  }
+  return out;
+}

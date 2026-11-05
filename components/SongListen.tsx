@@ -11,11 +11,14 @@ export default function SongListen({
   referenceUrl,
   dark = false,
   showEmptyNote = false,
+  audio = true,
 }: {
   songId: string;
   referenceUrl?: string | null;
   dark?: boolean;
   showEmptyNote?: boolean;
+  /** Also list uploaded audio files (off where the rehearsal player already plays them). */
+  audio?: boolean;
 }) {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -26,9 +29,9 @@ export default function SongListen({
     let alive = true;
     (async () => {
       const { data } = await supabase.from("song_files").select("id,name,path").eq("song_id", songId).order("name");
-      const audio = (data ?? []).filter((f) => isAudio(f.path));
+      const files = audio ? (data ?? []).filter((f) => isAudio(f.path)) : [];
       const out: Track[] = [];
-      for (const f of audio) {
+      for (const f of files) {
         const { data: s } = await supabase.storage.from("charts").createSignedUrl(f.path, 60 * 60 * 6);
         if (s) out.push({ id: f.id, name: f.name, url: s.signedUrl });
       }
@@ -40,7 +43,7 @@ export default function SongListen({
     return () => {
       alive = false;
     };
-  }, [songId]);
+  }, [songId, audio]);
 
   const muted = dark ? "opacity-60" : "text-muted";
   if (loaded && !embed && !tracks.length && !referenceUrl) {

@@ -21,13 +21,14 @@ export default function ChordSheet({
   const lines = parseChordPro(source);
   if (!lines.length) return <p className="text-sm italic opacity-60">No lyrics or chords yet.</p>;
   const chordColor = dark ? "text-amber-300" : "text-accent";
+  let sec = 0;
   return (
     <div style={{ fontSize }} className="leading-snug">
       {lines.map((l, i) => {
         if (l.type === "empty") return <div key={i} className="h-[0.9em]" />;
         if (l.type === "section")
           return (
-            <div key={i} className="mt-2 mb-1 text-[0.8em] font-bold uppercase tracking-wider opacity-70">
+            <div key={i} id={`sec-${sec++}`} className="scroll-mt-24 mt-2 mb-1 text-[0.8em] font-bold uppercase tracking-wider opacity-70">
               {l.label}
             </div>
           );

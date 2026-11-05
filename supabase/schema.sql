@@ -426,3 +426,6 @@ drop policy if exists "training_completions write" on training_completions;
 create policy "training_completions write" on training_completions for all
   using (is_active() and (profile_id = auth.uid() or is_leader()))
   with check (is_active() and (profile_id = auth.uid() or is_leader()));
+
+-- ───────────────────────── Section markers ─────────────────────────
+alter table song_files add column if not exists markers jsonb not null default '{}'::jsonb;
