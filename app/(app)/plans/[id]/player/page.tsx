@@ -173,12 +173,22 @@ export default function SetPlayerPage() {
 
       {tab === "Tutorials" && song && (
         <div className="card">
-          <Tutorials items={song.tutorials ?? []} />
-          {me.isLeader && (
-            <p className="mt-3 text-xs text-muted">
-              Add tutorial links on the <Link href={`/songs/${song.id}`} className="text-accent">song page</Link> (Edit → Tutorial videos).
-            </p>
-          )}
+          <Tutorials
+            items={song.tutorials ?? []}
+            onSave={
+              me.isLeader
+                ? async (next) => {
+                    const { error } = await supabase.from("songs").update({ tutorials: next }).eq("id", song.id);
+                    if (error) {
+                      alert(error.message);
+                      return false;
+                    }
+                    setSongs((xs) => xs.map((x) => (x.songs?.id === song.id ? { ...x, songs: { ...x.songs!, tutorials: next } } : x)));
+                    return true;
+                  }
+                : undefined
+            }
+          />
         </div>
       )}
 

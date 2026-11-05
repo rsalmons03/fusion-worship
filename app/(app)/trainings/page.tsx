@@ -3,7 +3,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useLocations, useProfile } from "@/components/ProfileContext";
 import { fmtDate } from "@/lib/format";
-import type { Position, PositionMember, Profile, Team } from "@/lib/types";
+import Link from "next/link";
+import Tutorials, { PARTS } from "@/components/Tutorials";
+import type { Position, PositionMember, Profile, Team, Tutorial } from "@/lib/types";
 
 type Training = {
   id: string;
@@ -32,6 +34,8 @@ export default function TrainingsPage() {
   const [adding, setAdding] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
+  const [songTuts, setSongTuts] = useState<{ id: string; title: string; tutorials: Tutorial[] }[]>([]);
+  const [part, setPart] = useState("");
 
   const load = useCallback(async () => {
     const [t, c, tm, pos, pm, ppl] = await Promise.all([
@@ -42,6 +46,8 @@ export default function TrainingsPage() {
       supabase.from("position_members").select("*"),
       supabase.from("profiles").select("id,email,full_name,phone,role,location_id").neq("role", "pending").order("full_name"),
     ]);
+    const st = await supabase.from("songs").select("id,title,tutorials").eq("archived", false).order("title");
+    if (!st.error) setSongTuts(((st.data ?? []) as { id: string; title: string; tutorials: Tutorial[] | null }[]).filter((x) => x.tutorials?.length).map((x) => ({ ...x, tutorials: x.tutorials ?? [] })));
     if (t.error) return setMissing(true);
     setTrainings((t.data ?? []) as Training[]);
     setDone((c.data ?? []) as Completion[]);
@@ -113,6 +119,35 @@ export default function TrainingsPage() {
     load();
   }
 
+  const songParts = PARTS.filter((p) => songTuts.some((s) => s.tutorials.some((t) => (t.part || "Other") === p)));
+  const songSection = songTuts.length > 0 && (
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="h2 flex-1">Song tutorials</h2>
+        {["", ...songParts].map((p) => (
+          <button
+            key={p || "all"}
+            onClick={() => setPart(p)}
+            className={`rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${part === p ? "bg-accent text-white" : "bg-stone-100 text-muted"}`}
+          >
+            {p || "All"}
+          </button>
+        ))}
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        {songTuts
+          .map((s) => ({ ...s, tutorials: s.tutorials.filter((t) => !part || (t.part || "Other") === part) }))
+          .filter((s) => s.tutorials.length)
+          .map((s) => (
+            <div key={s.id} className="card">
+              <Link href={`/songs/${s.id}`} className="mb-2 block font-display font-bold hover:text-accent">{s.title}</Link>
+              <Tutorials items={s.tutorials} />
+            </div>
+          ))}
+      </div>
+    </section>
+  );
+
   if (missing) return <p className="text-muted">Trainings aren&apos;t set up yet. Run the database update (003_charts_trainings.sql) in Supabase.</p>;
 
   const teamName = (id: string | null) => teams.find((t) => t.id === id)?.name;
@@ -157,7 +192,7 @@ export default function TrainingsPage() {
         </form>
       )}
 
-      {shown.length === 0 && <p className="text-sm text-muted">No trainings yet.</p>}
+      {shown.length === 0 && <p className="text-sm text-muted">No general trainings yet.{songTuts.length ? " Song tutorials are below." : ""}</p>}
       <div className="grid gap-4 md:grid-cols-2">
         {shown.map((t) => {
           const who = audience(t);
@@ -209,6 +244,8 @@ export default function TrainingsPage() {
           );
         })}
       </div>
+
+      {songSection}
     </div>
   );
 }

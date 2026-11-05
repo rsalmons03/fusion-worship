@@ -9,7 +9,8 @@ import ChartEditor from "@/components/ChartEditor";
 import SongFiles from "@/components/SongFiles";
 import SongListen from "@/components/SongListen";
 import RehearsalPlayer from "@/components/RehearsalPlayer";
-import Tutorials, { TutorialsEditor } from "@/components/Tutorials";
+import Tutorials from "@/components/Tutorials";
+import type { Tutorial } from "@/lib/types";
 import { KEYS, keyFromSource, prefersFlats, semitonesBetween, transposeKey } from "@/lib/chordpro";
 import { fmtDate } from "@/lib/format";
 import type { Song } from "@/lib/types";
@@ -112,6 +113,17 @@ export default function SongPage() {
     }
   }
 
+  async function saveTutorials(next: Tutorial[]) {
+    const { error } = await supabase.from("songs").update({ tutorials: next }).eq("id", params.id);
+    if (error) {
+      alert(/tutorials/.test(error.message) ? "Tutorials need the database update 006_tutorials.sql. " + error.message : error.message);
+      return false;
+    }
+    set("tutorials", next);
+    setHadTut(true);
+    return true;
+  }
+
   async function remove() {
     if (history.length && !confirm(`This song is in ${history.length} plan(s). Archive it instead? (OK = archive)`)) return;
     if (history.length) {
@@ -186,10 +198,6 @@ export default function SongPage() {
             </div>
             {!isNew && <SongFiles songId={params.id} canEdit={canEdit} onChange={() => setFilesVersion((v) => v + 1)} />}
             {isNew && <p className="text-sm text-muted">Save the song first, then you can upload audio, PDFs and other files.</p>}
-            <div>
-              <span className="label">Tutorial videos (drums, bass, keys…)</span>
-              <TutorialsEditor items={song.tutorials ?? []} onChange={(t) => set("tutorials", t)} />
-            </div>
             <F label="Arrangement notes"><textarea className="input" rows={2} value={song.notes ?? ""} onChange={(e) => set("notes", e.target.value)} /></F>
             <div className="flex gap-2">
               <button className="btn" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save song"}</button>
@@ -232,10 +240,10 @@ export default function SongPage() {
             {song.multitracks_url && (
               <a href={song.multitracks_url} target="_blank" rel="noreferrer" className="btn w-full">Open in MultiTracks</a>
             )}
-            {(song.tutorials?.length ?? 0) > 0 && (
+            {((song.tutorials?.length ?? 0) > 0 || (canEdit && !isNew)) && (
               <div className="card">
                 <div className="label mb-2">Tutorials</div>
-                <Tutorials items={song.tutorials ?? []} />
+                <Tutorials items={song.tutorials ?? []} onSave={canEdit ? saveTutorials : undefined} />
               </div>
             )}
             {!isNew && (

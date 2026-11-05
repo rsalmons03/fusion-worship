@@ -6,8 +6,22 @@ import type { Tutorial } from "@/lib/types";
 export const PARTS = ["Drums", "Bass", "Keys", "Acoustic", "Electric", "Vocals", "Synth / Pads", "Tracks", "Full band", "Other"];
 const PART_KEY = "fw.part";
 
-/** Tutorial videos for a song, filtered by instrument; YouTube etc. play inline. */
-export default function Tutorials({ items, dark = false }: { items: Tutorial[]; dark?: boolean }) {
+/**
+ * Tutorial videos for a song, filtered by instrument; YouTube/Vimeo play inline.
+ * With `onSave`, leaders can add and remove links right here (saved immediately).
+ */
+export default function Tutorials({
+  items,
+  dark = false,
+  onSave,
+}: {
+  items: Tutorial[];
+  dark?: boolean;
+  onSave?: (next: Tutorial[]) => Promise<boolean>;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState<Tutorial>({ part: "Drums", title: "", url: "" });
+  const [saving, setSaving] = useState(false);
   const [part, setPart] = useState<string>("");
   const [openIdx, setOpenIdx] = useState<number | null>(null);
   useEffect(() => {
@@ -28,7 +42,52 @@ export default function Tutorials({ items, dark = false }: { items: Tutorial[]; 
   const shown = items.map((t, i) => ({ t, i })).filter(({ t }) => !part || !parts.includes(part) || (t.part || "Other") === part);
   const muted = dark ? "opacity-60" : "text-muted";
 
-  if (!items.length) return <p className={`text-sm ${muted}`}>No tutorials for this song yet.</p>;
+  async function add(e: React.FormEvent) {
+    e.preventDefault();
+    if (!onSave || !draft.url.trim()) return;
+    let url = draft.url.trim();
+    if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+    setSaving(true);
+    const ok = await onSave([...items, { ...draft, url, title: draft.title.trim() || `${draft.part} tutorial` }]);
+    setSaving(false);
+    if (ok) {
+      setDraft({ part: draft.part, title: "", url: "" });
+      setAdding(false);
+    }
+  }
+
+  async function remove(i: number) {
+    if (!onSave || !confirm(`Remove "${items[i].title || "this tutorial"}"?`)) return;
+    await onSave(items.filter((_, j) => j !== i));
+  }
+
+  const addForm = onSave && (
+    adding ? (
+      <form onSubmit={add} className={`grid gap-2 rounded-md border border-dashed p-3 ${dark ? "border-white/20" : "border-accent/50 bg-accent-soft/40"}`}>
+        <div className="grid gap-2 sm:grid-cols-[9rem_1fr]">
+          <select className="input" value={draft.part} onChange={(e) => setDraft({ ...draft, part: e.target.value })} aria-label="Instrument">
+            {PARTS.map((p) => <option key={p}>{p}</option>)}
+          </select>
+          <input className="input" placeholder="Title (e.g. Drum tutorial)" value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} />
+        </div>
+        <input className="input" required placeholder="Paste a YouTube, Vimeo or other link" value={draft.url} onChange={(e) => setDraft({ ...draft, url: e.target.value })} inputMode="url" autoFocus />
+        <div className="flex gap-2">
+          <button className="btn" disabled={saving}>{saving ? "Saving…" : "Add"}</button>
+          <button type="button" className="btn-secondary" onClick={() => setAdding(false)}>Cancel</button>
+        </div>
+      </form>
+    ) : (
+      <button className="btn-secondary w-full" onClick={() => setAdding(true)}>+ Add tutorial link</button>
+    )
+  );
+
+  if (!items.length)
+    return (
+      <div className="space-y-3">
+        <p className={`text-sm ${muted}`}>No tutorials for this song yet.</p>
+        {addForm}
+      </div>
+    );
 
   return (
     <div className="space-y-3">
@@ -61,6 +120,9 @@ export default function Tutorials({ items, dark = false }: { items: Tutorial[]; 
                 ) : (
                   <a className="btn-secondary py-1 text-xs" href={t.url} target="_blank" rel="noreferrer">Open ↗</a>
                 )}
+                {onSave && (
+                  <button className="btn-ghost px-1 text-xs text-bad" onClick={() => remove(i)} aria-label="Remove tutorial">✕</button>
+                )}
               </div>
               {isOpen && embed && (
                 <iframe
@@ -75,28 +137,7 @@ export default function Tutorials({ items, dark = false }: { items: Tutorial[]; 
           );
         })}
       </ul>
-    </div>
-  );
-}
-
-/** Add / edit / remove tutorial links while editing a song. */
-export function TutorialsEditor({ items, onChange }: { items: Tutorial[]; onChange: (t: Tutorial[]) => void }) {
-  const set = (i: number, patch: Partial<Tutorial>) => onChange(items.map((t, j) => (j === i ? { ...t, ...patch } : t)));
-  return (
-    <div className="space-y-2">
-      {items.map((t, i) => (
-        <div key={i} className="grid gap-2 rounded-md border border-line p-2 sm:grid-cols-[8rem_1fr_auto]">
-          <select className="input" value={t.part} onChange={(e) => set(i, { part: e.target.value })} aria-label="Instrument">
-            {PARTS.map((p) => <option key={p}>{p}</option>)}
-          </select>
-          <div className="grid gap-2">
-            <input className="input" placeholder="Title (e.g. Drum tutorial – Jordan's groove)" value={t.title} onChange={(e) => set(i, { title: e.target.value })} />
-            <input className="input" placeholder="YouTube / Vimeo / MultiTracks link" value={t.url} onChange={(e) => set(i, { url: e.target.value })} />
-          </div>
-          <button type="button" className="btn-ghost text-bad" onClick={() => onChange(items.filter((_, j) => j !== i))} aria-label="Remove tutorial">✕</button>
-        </div>
-      ))}
-      <button type="button" className="btn-secondary" onClick={() => onChange([...items, { part: "Drums", title: "", url: "" }])}>+ Add tutorial link</button>
+      {addForm}
     </div>
   );
 }
