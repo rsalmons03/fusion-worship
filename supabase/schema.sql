@@ -546,7 +546,8 @@ alter table positions add column if not exists can_double boolean not null defau
 
 -- Singing can be done alongside playing.
 update positions set can_double = true
-where can_double = false and (name ilike '%vocal%' or name ilike '%bgv%' or name ilike '%vox%' or name ilike '%singer%' or name ilike '%choir%' or name ilike 'worship leader%');
+where can_double = false and (name ilike '%vocal%' or name ilike '%bgv%' or name ilike '%vox%' or name ilike '%singer%' or name ilike '%choir%' or name ilike 'worship leader%'
+       or name ilike '%director%' or name ilike 'md' or name ilike 'music director%');
 
 -- A plain "Vocals" position becomes "Backup Vocals" (keeps everyone already on it).
 update positions p set name = 'Backup Vocals', needed = greatest(p.needed, 3)
