@@ -188,13 +188,39 @@ export default function RehearsalPlayer({
   }, [trackUrl]);
 
   // ── Markers ──
+  // Rough section start times spread by lyric lines; used until real times are saved.
+  const guess = useMemo(() => {
+    const markers: Record<string, number> = {};
+    if (!duration || !sections.length) return markers;
+    const lines: number[] = [];
+    let cur = -1;
+    for (const l of parseChordPro(chart)) {
+      if (l.type === "section") lines[++cur] = 0;
+      else if (l.type === "lyrics" && cur >= 0) lines[cur]++;
+    }
+    const firstLen = new Map<string, number>();
+    const w = sections.map((sec, i) => {
+      const key = sec.label.toLowerCase();
+      if (lines[i] > 0 && !firstLen.has(key)) firstLen.set(key, lines[i]);
+      return Math.max(1, lines[i] || firstLen.get(key) || 2);
+    });
+    const total = w.reduce((a, b) => a + b, 0);
+    let t = 0;
+    sections.forEach((sec, i) => {
+      markers[sec.n] = Math.round(t * 10) / 10;
+      t += (w[i] / total) * duration;
+    });
+    return markers;
+  }, [chart, sections, duration]);
+  const saved = Object.keys(track?.markers ?? {}).length > 0;
+  const estimated = !saved && Object.keys(guess).length > 0;
   const marks = useMemo(
     () =>
-      Object.entries(track?.markers ?? {})
+      Object.entries(saved ? track?.markers ?? {} : guess)
         .map(([n, t]) => ({ n: Number(n), t }))
         .filter((m) => sections[m.n])
         .sort((a, b) => a.t - b.t),
-    [track, sections]
+    [track, sections, saved, guess]
   );
   const current = useMemo(() => {
     let c: number | null = null;
@@ -414,7 +440,7 @@ export default function RehearsalPlayer({
     const words = countIn === "1234" ? ["1", "2", "3", "4"] : ["3", "2", "1"];
     const spb = (bpm ? 60 / bpm : 1) / rate;
     const ctx = newAudioContext();
-    const t0 = ctx.currentTime + 0.15;
+    const t0 = ctx.currentTime + 0.02;
     words.forEach((_, i) => {
       const o = ctx.createOscillator();
       const g = ctx.createGain();
@@ -438,20 +464,17 @@ export default function RehearsalPlayer({
         if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
         finish(false);
       };
-      words.forEach((w, i) =>
-        timers.push(
-          window.setTimeout(() => {
-            setCounting(w);
-            if (typeof speechSynthesis !== "undefined") {
-              speechSynthesis.cancel();
-              const u = new SpeechSynthesisUtterance(w);
-              u.rate = 1.3;
-              speechSynthesis.speak(u);
-            }
-          }, 150 + i * spb * 1000)
-        )
-      );
-      timers.push(window.setTimeout(() => finish(true), 150 + words.length * spb * 1000));
+      const say = (w: string) => {
+        setCounting(w);
+        if (typeof speechSynthesis !== "undefined") {
+          speechSynthesis.cancel();
+          const u = new SpeechSynthesisUtterance(w);
+          u.rate = 1.3;
+          speechSynthesis.speak(u);
+        }
+      };
+      words.forEach((w, i) => (i === 0 ? say(w) : timers.push(window.setTimeout(() => say(w), i * spb * 1000))));
+      timers.push(window.setTimeout(() => finish(true), words.length * spb * 1000));
     });
   }
 
@@ -462,6 +485,19 @@ export default function RehearsalPlayer({
     if (!a) return;
     // Count in when starting the song from the top.
     if (countIn !== "off" && a.currentTime < 0.5) {
+      // iPhones only let audio start straight from a tap. Start it silently now so it's allowed to play after the count.
+      for (const el of new Set([a, ...followers()])) {
+        el.muted = true;
+        el.play()
+          .then(() => {
+            if (countAbort.current) {
+              el.pause();
+              el.currentTime = 0;
+            }
+          })
+          .catch(() => {})
+          .finally(() => (el.muted = false));
+      }
       if (!(await runCountIn())) return;
     }
     a.play().catch(() => {});
@@ -509,27 +545,7 @@ export default function RehearsalPlayer({
 
   /** Spread the sections across the song by how many lyric lines each has (a repeat uses its first time's length). */
   function estimateMarkers() {
-    if (!duration || !sections.length) return;
-    const lines: number[] = [];
-    let cur = -1;
-    for (const l of parseChordPro(chart)) {
-      if (l.type === "section") lines[++cur] = 0;
-      else if (l.type === "lyrics" && cur >= 0) lines[cur]++;
-    }
-    const firstLen = new Map<string, number>();
-    const w = sections.map((sec, i) => {
-      const key = sec.label.toLowerCase();
-      if (lines[i] > 0 && !firstLen.has(key)) firstLen.set(key, lines[i]);
-      return Math.max(1, lines[i] || firstLen.get(key) || 2);
-    });
-    const total = w.reduce((a, b) => a + b, 0);
-    let t = 0;
-    const markers: Record<string, number> = {};
-    sections.forEach((sec, i) => {
-      markers[sec.n] = Math.round(t * 10) / 10;
-      t += (w[i] / total) * duration;
-    });
-    saveMarkers(markers);
+    if (Object.keys(guess).length) saveMarkers(guess);
   }
 
   async function clearMarkers() {
@@ -788,7 +804,7 @@ export default function RehearsalPlayer({
                   </button>
                 ) : null}
                 <button onClick={toggleCues} className={chip(cues)} title="Say each section's name (Verse 1, Chorus…) just before it starts">
-                  🗣 Cues{!marks.length && " (mark first)"}
+                  🗣 Cues{!marks.length ? " (mark first)" : estimated ? " (est.)" : ""}
                 </button>
                 <select
                   aria-label="Count-in"
