@@ -6,6 +6,8 @@ import { createClient } from "@/lib/supabase/client";
 import { useLocations, useProfile } from "@/components/ProfileContext";
 import StatusChip from "@/components/StatusChip";
 import SongListen from "@/components/SongListen";
+import PlanTimes from "@/components/plan/PlanTimes";
+import PlanFiles from "@/components/plan/PlanFiles";
 import { KEYS } from "@/lib/chordpro";
 import { addMinutes, fmtDate, fmtTime, planLabel } from "@/lib/format";
 import type {
@@ -45,6 +47,11 @@ export default function PlanPage() {
   const [blockouts, setBlockouts] = useState<Blockout[]>([]);
   const [notFound, setNotFound] = useState(false);
   const [sending, setSending] = useState(false);
+  const TABS = ["Order", "Teams", "Times", "Notes", "Files"] as const;
+  type Tab = (typeof TABS)[number];
+  const [tab, setTab] = useState<Tab>("Order");
+  const [showDetails, setShowDetails] = useState(false);
+  const [neighbors, setNeighbors] = useState<{ prev: string | null; next: string | null }>({ prev: null, next: null });
 
   const loadItems = useCallback(async () => {
     const { data } = await supabase.from("plan_items").select("*, songs(reference_url)").eq("plan_id", planId).order("position");
@@ -81,6 +88,26 @@ export default function PlanPage() {
     loadItems();
     loadAssignments();
   }, [planId, loadItems, loadAssignments]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Previous / next service (same location) for the ‹ › arrows.
+  useEffect(() => {
+    if (!plan) return;
+    const base = () => {
+      let q = supabase.from("plans").select("id");
+      if (plan.location_id) q = q.eq("location_id", plan.location_id);
+      return q;
+    };
+    Promise.all([
+      base().lt("service_date", plan.service_date).order("service_date", { ascending: false }).limit(1),
+      base().gt("service_date", plan.service_date).order("service_date").limit(1),
+    ]).then(([a, b]) => setNeighbors({ prev: a.data?.[0]?.id ?? null, next: b.data?.[0]?.id ?? null }));
+  }, [plan?.id, plan?.service_date, plan?.location_id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function respond(id: string, status: "accepted" | "declined") {
+    const { error } = await supabase.from("assignments").update({ status }).eq("id", id);
+    if (error) alert(error.message);
+    loadAssignments();
+  }
 
   async function savePlan(patch: Partial<Plan>) {
     if (!plan) return;
@@ -188,29 +215,82 @@ export default function PlanPage() {
 
   const planTeams = teams.filter((t) => !t.location_id || !plan.location_id || t.location_id === plan.location_id);
 
+  const myAssignments = assignments.filter((a) => a.profile_id === me.id);
+  const posName = (id: string) => {
+    const p = positions.find((x) => x.id === id);
+    const t = teams.find((x) => x.id === p?.team_id);
+    return { pos: p?.name ?? "", team: t?.name ?? "" };
+  };
+  const myTeamIds = new Set(myAssignments.map((a) => positions.find((p) => p.id === a.position_id)?.team_id));
+  const orderedTeams = [...planTeams].sort((a, b) => Number(myTeamIds.has(b.id)) - Number(myTeamIds.has(a.id)));
+  const songItems = items.filter((i) => i.kind === "song" && i.song_id).map((i) => ({ id: i.song_id!, title: i.title }));
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Header */}
-      <div className="flex flex-wrap items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <Link href="/plans" className="text-sm text-muted hover:text-ink print:hidden">← Plans</Link>
+      <div className="print:hidden">
+        <Link href="/plans" className="text-sm text-muted hover:text-ink">← Plans</Link>
+      </div>
+      <div>
+        <div className="min-w-0">
           <h1 className="h1">{planLabel(plan)}</h1>
-          <p className="text-muted">
-            {plan.location_id && <span className="font-semibold text-accent">{loc.name(plan.location_id)} · </span>}
-            {fmtDate(plan.service_date, { weekday: "long", month: "long" })} {fmtTime(plan.start_time)}
-            {totalMin > 0 && ` · ${totalMin} min`}
-          </p>
-        </div>
-        <div className="flex gap-2 print:hidden">
-          <Link href={`/plans/${plan.id}/player`} className="btn">▶ Rehearse</Link>
-          <Link href={`/live/${plan.id}`} className="btn-secondary">Stage view</Link>
-          <button className="btn-secondary" onClick={() => window.print()}>Print</button>
-          {canEdit && <button className="btn-secondary text-bad" onClick={deletePlan}>Delete</button>}
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <button
+              className="grid h-8 w-8 place-items-center rounded-full bg-stone-100 text-accent disabled:opacity-30 print:hidden"
+              disabled={!neighbors.prev}
+              onClick={() => neighbors.prev && router.push(`/plans/${neighbors.prev}`)}
+              aria-label="Previous service"
+            >
+              ‹
+            </button>
+            <button
+              className="grid h-8 w-8 place-items-center rounded-full bg-stone-100 text-accent disabled:opacity-30 print:hidden"
+              disabled={!neighbors.next}
+              onClick={() => neighbors.next && router.push(`/plans/${neighbors.next}`)}
+              aria-label="Next service"
+            >
+              ›
+            </button>
+            <span className="font-display text-lg font-bold text-muted">
+              {fmtDate(plan.service_date, { weekday: undefined, year: undefined })}
+            </span>
+            {plan.location_id && <span className="rounded-sm bg-accent-soft px-1.5 py-0.5 text-xs font-bold uppercase text-accent">{loc.name(plan.location_id)}</span>}
+            {canEdit && (
+              <button className="btn-ghost ml-auto print:hidden" onClick={() => setShowDetails(!showDetails)} aria-expanded={showDetails}>
+                {showDetails ? "Done" : "⚙ Edit details"}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
-      {canEdit && (
-        <section className="card grid gap-3 sm:grid-cols-2 lg:grid-cols-6 print:hidden">
+      {/* My role(s) in this service */}
+      {myAssignments.length > 0 && (
+        <div className="flex flex-wrap gap-2 print:hidden">
+          {myAssignments.map((a) => {
+            const { pos, team } = posName(a.position_id);
+            const ok = a.status === "accepted";
+            const no = a.status === "declined";
+            return (
+              <div key={a.id} className="flex items-stretch overflow-hidden rounded-md border border-line bg-white">
+                <span className={`grid w-10 place-items-center text-lg text-white ${ok ? "bg-ok" : no ? "bg-bad" : "bg-amber-500"}`}>{ok ? "✓" : no ? "✕" : "?"}</span>
+                <span className="px-3 py-2 text-sm">
+                  <b>{pos}</b> <span className="text-accent">({team})</span>
+                </span>
+                {(a.status === "pending" || a.status === "unsent") && (
+                  <span className="flex items-center gap-1 pr-2">
+                    <button className="btn py-1 text-xs" onClick={() => respond(a.id, "accepted")}>Accept</button>
+                    <button className="btn-secondary py-1 text-xs" onClick={() => respond(a.id, "declined")}>Decline</button>
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {canEdit && showDetails && (
+        <section className="card grid gap-3 sm:grid-cols-2 lg:grid-cols-3 print:hidden">
           {loc.locations.length > 0 && (
             <Field label="Location">
               <select className="input" value={plan.location_id ?? ""} disabled={!loc.canSwitch} onChange={(e) => savePlan({ location_id: e.target.value || null })}>
@@ -237,16 +317,33 @@ export default function PlanPage() {
               {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           </Field>
-          <div className="sm:col-span-2 lg:col-span-6">
-            <Field label="Notes for the team">
-              <textarea className="input" rows={2} defaultValue={plan.notes ?? ""} onBlur={(e) => savePlan({ notes: e.target.value || null })} />
-            </Field>
+          <div className="flex items-end sm:col-span-2 lg:col-span-3">
+            <button className="btn-secondary text-bad" onClick={deletePlan}>Delete this plan</button>
           </div>
         </section>
       )}
-      {!canEdit && plan.notes && <section className="card whitespace-pre-wrap text-sm">{plan.notes}</section>}
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
+      {/* Tabs */}
+      <div className="sticky top-[57px] z-10 -mx-4 flex overflow-x-auto border-b border-line bg-paper px-4 print:hidden">
+        {TABS.map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`shrink-0 border-b-2 px-4 py-2.5 font-display text-sm font-bold uppercase tracking-wider ${tab === t ? "border-accent text-ink" : "border-transparent text-muted"}`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === "Order" && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2 print:hidden">
+            <Link href={`/plans/${plan.id}/player`} className="btn">▶ Play</Link>
+            <button className="btn-secondary" onClick={() => window.print()}>🖨 Print</button>
+            <Link href={`/live/${plan.id}`} className="btn-secondary">📡 Live</Link>
+            {totalMin > 0 && <span className="ml-auto self-center text-sm text-muted">{totalMin} min</span>}
+          </div>
         {/* Order of service */}
         <section className="card p-0">
           <div className="border-b border-line px-4 py-3">
@@ -271,22 +368,30 @@ export default function PlanPage() {
           {canEdit && <AddBar songs={songs} onAdd={addItem} />}
         </section>
 
-        {/* Teams */}
+        </div>
+      )}
+
+      {tab === "Teams" && (
         <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="h2">Teams</h2>
+          <div className="flex flex-wrap items-center gap-3">
+            <TeamCounts list={assignments} big />
             {canEdit && (
-              <button className="btn print:hidden" disabled={!unsent || sending} onClick={sendRequests} title="Ask everyone marked 'Not sent' to confirm">
+              <button className="btn ml-auto print:hidden" disabled={!unsent || sending} onClick={sendRequests} title="Ask everyone marked 'Not sent' to confirm">
                 {sending ? "Sending…" : `Send requests${unsent ? ` (${unsent})` : ""}`}
               </button>
             )}
           </div>
           {planTeams.length === 0 && <p className="text-sm text-muted">No teams yet. <Link href="/teams" className="text-accent">Set up teams</Link></p>}
-          {planTeams.map((team) => (
+          <div className="grid gap-4 md:grid-cols-2">
+          {orderedTeams.map((team) => (
             <div key={team.id} className="card">
-              <h3 className="mb-2 font-semibold">
-                {team.name}
-                {!team.location_id && <span className="ml-2 text-xs font-normal text-muted">Shared</span>}
+              {myTeamIds.has(team.id) && orderedTeams[0].id === team.id && <div className="label mb-1 text-accent">My team</div>}
+              <h3 className="mb-2 flex flex-wrap items-center gap-x-3 font-display font-bold">
+                <span className="flex-1">
+                  {team.name}
+                  {!team.location_id && <span className="ml-2 text-xs font-normal text-muted">Shared</span>}
+                </span>
+                <TeamCounts list={assignments.filter((a) => positions.some((p) => p.id === a.position_id && p.team_id === team.id))} />
               </h3>
               <ul className="space-y-2">
                 {positions.filter((p) => p.team_id === team.id).map((pos) => {
@@ -330,9 +435,52 @@ export default function PlanPage() {
               </ul>
             </div>
           ))}
+          </div>
         </section>
-      </div>
+      )}
+
+      {tab === "Times" && <PlanTimes planId={plan.id} serviceDate={plan.service_date} canEdit={canEdit} />}
+
+      {tab === "Notes" && (
+        <div className="space-y-4">
+          {canEdit ? (
+            <div className="card">
+              <div className="label">Notes for the team</div>
+              <textarea className="input mt-1" rows={6} defaultValue={plan.notes ?? ""} placeholder="Dress code, parking, anything the team should know…" onBlur={(e) => savePlan({ notes: e.target.value || null })} />
+              <p className="mt-1 text-xs text-muted">Saves when you tap outside the box.</p>
+            </div>
+          ) : plan.notes ? (
+            <div className="card whitespace-pre-wrap">{plan.notes}</div>
+          ) : (
+            <p className="text-sm text-muted">No notes for this service.</p>
+          )}
+          {items.some((i) => i.description) && (
+            <div className="card">
+              <div className="label mb-2">Item notes</div>
+              <ul className="space-y-2 text-sm">
+                {items.filter((i) => i.description).map((i) => (
+                  <li key={i.id}><b>{i.title}:</b> <span className="whitespace-pre-wrap text-muted">{i.description}</span></li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "Files" && <PlanFiles planId={plan.id} songs={songItems} />}
     </div>
+  );
+}
+
+function TeamCounts({ list, big = false }: { list: Assignment[]; big?: boolean }) {
+  const n = (s: string) => list.filter((a) => a.status === s).length;
+  const cls = big ? "text-base" : "text-sm";
+  return (
+    <span className={`flex items-center gap-3 font-sans font-semibold ${cls}`}>
+      <span className="text-ok" title="Confirmed">✓ {n("accepted")}</span>
+      <span className="text-bad" title="Declined">✕ {n("declined")}</span>
+      <span className="text-amber-600" title="Waiting / not asked">? {n("pending") + n("unsent")}</span>
+    </span>
   );
 }
 
@@ -401,9 +549,19 @@ function ItemRow({
             ))}
         </div>
         {canEdit ? (
-          <input className="w-full bg-transparent text-sm text-muted outline-none placeholder:text-stone-300" placeholder="Notes (who's leading, transitions, cues)…" defaultValue={item.description ?? ""} onBlur={(e) => e.target.value !== (item.description ?? "") && onSave({ description: e.target.value || null })} />
+          <textarea
+            className="w-full resize-none bg-transparent text-sm text-muted outline-none placeholder:text-stone-300"
+            rows={Math.max(1, (item.description ?? "").split("\n").length)}
+            placeholder="Notes (who's leading, transitions, cues)…"
+            defaultValue={item.description ?? ""}
+            onInput={(e) => {
+              const el = e.currentTarget;
+              el.rows = Math.max(1, el.value.split("\n").length);
+            }}
+            onBlur={(e) => e.target.value !== (item.description ?? "") && onSave({ description: e.target.value || null })}
+          />
         ) : (
-          item.description && <p className="text-sm text-muted">{item.description}</p>
+          item.description && <p className="whitespace-pre-wrap text-sm text-muted">{item.description}</p>
         )}
         {item.song_id && (
           <button className="btn-ghost -ml-2 text-xs print:hidden" onClick={() => setListening(!listening)}>

@@ -1,4 +1,5 @@
 import Nav from "@/components/Nav";
+import BottomNav from "@/components/BottomNav";
 import PendingNotice from "@/components/PendingNotice";
 import { ProfileProvider } from "@/components/ProfileContext";
 import { loadLocations, requireProfile } from "@/lib/session";
@@ -12,7 +13,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <ProfileProvider profile={profile} locations={locations}>
       <Nav />
-      <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
+      <main className="mx-auto max-w-6xl px-4 pb-24 pt-6 lg:pb-6">{children}</main>
+      <BottomNav />
     </ProfileProvider>
   );
 }
