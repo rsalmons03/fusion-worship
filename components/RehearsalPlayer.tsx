@@ -1,4 +1,5 @@
 "use client";
+import { CUE_VOICES, type CueVoiceId, cueClick, cueClock, preloadCues, sayCue, unlockCues } from "@/lib/cueVoice";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { parseChordPro, sectionsOf, type SectionInfo } from "@/lib/chordpro";
@@ -117,6 +118,25 @@ export default function RehearsalPlayer({
       if (v === "321" || v === "1234" || v === "off") setCountIn(v);
     } catch {}
   }, []);
+  // Guide voice for cues and the count-in. Remembered on this device.
+  const [voice, setVoice] = useState<CueVoiceId>("male");
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("fw.voice");
+      if (v === "male" || v === "female" || v === "device") setVoice(v);
+    } catch {}
+  }, []);
+  const chooseVoice = (v: CueVoiceId) => {
+    setVoice(v);
+    try {
+      localStorage.setItem("fw.voice", v);
+    } catch {}
+    unlockCues();
+    sayCue(v, "Verse 1");
+  };
+  useEffect(() => {
+    preloadCues(voice, [...sections.map((x) => x.label), "1", "2", "3", "4", "Cues on"]);
+  }, [voice, sections]);
   const chooseCountIn = (v: "321" | "1234" | "off") => {
     setCountIn(v);
     try {
@@ -374,18 +394,15 @@ export default function RehearsalPlayer({
       for (const m of marks) if (m.t > time) spoken.current.delete(m.n);
     }
     lastTime.current = time;
-    if (!cues || !playing || typeof speechSynthesis === "undefined") return;
+    if (!cues || !playing) return;
     const lead = (bpm ? (4 * 60) / bpm : 2) / rate;
     for (const m of marks) {
       if (time >= m.t - lead && time < m.t - 0.15 && !spoken.current.has(m.n)) {
         spoken.current.add(m.n);
-        const u = new SpeechSynthesisUtterance(sections[m.n]?.label ?? "");
-        u.rate = 1.15;
-        speechSynthesis.cancel();
-        speechSynthesis.speak(u);
+        sayCue(voice, sections[m.n]?.label ?? "");
       }
     }
-  }, [time, cues, playing, marks, bpm, rate, sections]);
+  }, [time, cues, playing, marks, bpm, rate, sections, voice]);
 
   function toggleCues() {
     if (!cues && !marks.length) {
@@ -399,9 +416,10 @@ export default function RehearsalPlayer({
     }
     const on = !cues;
     setCues(on);
-    if (on && typeof speechSynthesis !== "undefined") {
-      // Phones only allow speech after a tap, so say something now.
-      speechSynthesis.speak(new SpeechSynthesisUtterance("Cues on"));
+    if (on) {
+      // Phones only allow sound after a tap, so unlock and say something now.
+      unlockCues();
+      sayCue(voice, "Cues on");
     }
   }
 
@@ -439,25 +457,15 @@ export default function RehearsalPlayer({
   function runCountIn(): Promise<boolean> {
     const words = countIn === "1234" ? ["1", "2", "3", "4"] : ["3", "2", "1"];
     const spb = (bpm ? 60 / bpm : 1) / rate;
-    const ctx = newAudioContext();
-    const t0 = ctx.currentTime + 0.02;
-    words.forEach((_, i) => {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.frequency.value = i === 0 ? 1500 : 1000;
-      g.gain.setValueAtTime(0.5, t0 + i * spb);
-      g.gain.exponentialRampToValueAtTime(0.001, t0 + i * spb + 0.06);
-      o.connect(g).connect(ctx.destination);
-      o.start(t0 + i * spb);
-      o.stop(t0 + i * spb + 0.07);
-    });
+    unlockCues();
+    const t0 = cueClock() + 0.03;
+    words.forEach((_, i) => cueClick(t0 + i * spb, i === 0));
     const timers: number[] = [];
     return new Promise((resolve) => {
       const finish = (ok: boolean) => {
         timers.forEach(clearTimeout);
         setCounting(null);
         countAbort.current = null;
-        setTimeout(() => ctx.close().catch(() => {}), 300);
         resolve(ok);
       };
       countAbort.current = () => {
@@ -466,12 +474,7 @@ export default function RehearsalPlayer({
       };
       const say = (w: string) => {
         setCounting(w);
-        if (typeof speechSynthesis !== "undefined") {
-          speechSynthesis.cancel();
-          const u = new SpeechSynthesisUtterance(w);
-          u.rate = 1.3;
-          speechSynthesis.speak(u);
-        }
+        sayCue(voice, w);
       };
       words.forEach((w, i) => (i === 0 ? say(w) : timers.push(window.setTimeout(() => say(w), i * spb * 1000))));
       timers.push(window.setTimeout(() => finish(true), words.length * spb * 1000));
@@ -481,6 +484,7 @@ export default function RehearsalPlayer({
   // ── Transport ──
   async function play() {
     ensureGraph();
+    unlockCues();
     const a = audioRef.current;
     if (!a) return;
     // Count in when starting the song from the top.
@@ -816,6 +820,15 @@ export default function RehearsalPlayer({
                   <option value="321" className="text-ink">Count-in: 3-2-1</option>
                   <option value="1234" className="text-ink">Count-in: 1-2-3-4</option>
                   <option value="off" className="text-ink">No count-in</option>
+                </select>
+                <select
+                  aria-label="Guide voice"
+                  value={voice}
+                  onChange={(e) => chooseVoice(e.target.value as CueVoiceId)}
+                  className="rounded-sm border border-current/20 bg-transparent px-1 py-0.5"
+                  title="Voice for cues and the count-in"
+                >
+                  {CUE_VOICES.map((v) => <option key={v.id} value={v.id} className="text-ink">{v.name}</option>)}
                 </select>
                 {tracks.length > 1 && (
                   <select
