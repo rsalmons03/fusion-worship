@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useProfile } from "@/components/ProfileContext";
@@ -23,7 +23,8 @@ import type {
 
 type SongLite = Pick<Song, "id" | "title" | "author" | "default_key">;
 
-export default function PlanPage({ params }: { params: { id: string } }) {
+export default function PlanPage() {
+  const params = useParams<{ id: string }>();
   const planId = params.id;
   const me = useProfile();
   const canEdit = me.isLeader;

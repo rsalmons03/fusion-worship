@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useProfile } from "@/components/ProfileContext";
@@ -31,7 +31,8 @@ Chorus
 [C]Chords go right be[G]fore the syllable
 [D]they land on`;
 
-export default function SongPage({ params }: { params: { id: string } }) {
+export default function SongPage() {
+  const params = useParams<{ id: string }>();
   const isNew = params.id === "new";
   const me = useProfile();
   const canEdit = me.isLeader;

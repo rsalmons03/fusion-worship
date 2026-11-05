@@ -3,7 +3,7 @@ import type { Profile } from "@/lib/types";
 
 // Returns the signed-in caller's profile (via their own RLS-bound session), or null.
 export async function callerProfile(): Promise<Profile | null> {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

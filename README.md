@@ -3,7 +3,7 @@
 Service planning for Fusion Church: plan Sunday's order of service, keep a song library with
 chord charts, schedule teams, and give musicians a stage view on their phone or tablet.
 
-Built on **Next.js (App Router, TypeScript) + Supabase + Vercel**, with email through **Resend**.
+Built on **Next.js (App Router, TypeScript) + Supabase + Cloudflare Workers**, with email through **Resend**.
 
 ## What it does
 
@@ -36,7 +36,7 @@ Rules are enforced in Postgres with Row-Level Security (`supabase/schema.sql`), 
 
 ## Setup
 
-> Everything here is **brand-new and separate from BC Billing**: its own Supabase project, Resend account, Vercel project and domain. Nothing is shared.
+> Everything here is **brand-new and separate from BC Billing**: its own Supabase project, Resend account, Cloudflare Worker and domain. Nothing is shared.
 
 ### 1. Supabase (database + login)
 1. Create a project at [supabase.com](https://supabase.com).
@@ -58,21 +58,24 @@ Rules are enforced in Postgres with Row-Level Security (`supabase/schema.sql`), 
    Settings** and enter host `smtp.resend.com`, port `465`, username `resend`, password = your
    Resend API key, and sender = your `EMAIL_FROM` address.
 
-### 3. Deploy (Vercel)
-1. Import this GitHub repo at [vercel.com/new](https://vercel.com/new).
-2. Add the environment variables from `.env.local.example`:
-   `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
-   `NEXT_PUBLIC_CHURCH_NAME`, `NEXT_PUBLIC_SITE_URL`, `RESEND_API_KEY`, `EMAIL_FROM`.
-3. Deploy.
+### 3. Deploy (Cloudflare Workers)
+The app runs on Cloudflare Workers through the [OpenNext](https://opennext.js.org/cloudflare) adapter.
+1. In the Cloudflare dashboard: **Workers & Pages → Create → Import a repository**, and pick this repo.
+2. Build settings:
+   - Build command: `npx opennextjs-cloudflare build`
+   - Deploy command: `npx opennextjs-cloudflare deploy`
+3. Add the variables from `.env.local.example` under **Settings → Variables and Secrets** *and*
+   under **Settings → Build → Variables and secrets** (`NEXT_PUBLIC_*` values are baked in at build
+   time). Make `SUPABASE_SERVICE_ROLE_KEY` and `RESEND_API_KEY` the **Secret** type.
+4. Deploy. The site appears at `fusion-worship.<your-account>.workers.dev`.
+
+To deploy from your own computer instead: `npx wrangler login`, then `npm run deploy`.
 
 ### 4. Your domain
-1. Buy the domain from any registrar (Cloudflare, Porkbun, Namecheap, …), or buy it inside Vercel
-   (**Domains → Buy**), which sets up DNS for you.
-2. In Vercel: **Project → Settings → Domains → Add** `fusionchurchservices.cc` (and `www.fusionchurchservices.cc`).
-3. At your registrar, add the DNS records Vercel shows you. Usually that's an `A` record for the
-   root pointing to Vercel's IP and a `CNAME` for `www` pointing to Vercel. Use the exact
-   values Vercel displays. HTTPS is set up automatically once DNS resolves.
-4. Set `NEXT_PUBLIC_SITE_URL=https://fusionchurchservices.cc` in Vercel, update the Supabase Site URL and
+1. Add the domain to Cloudflare (buy it under **Domains → Register**, or transfer it in).
+2. In the Worker: **Settings → Domains & Routes → Add → Custom domain** → `fusionchurchservices.cc`
+   (and `www.fusionchurchservices.cc`). Cloudflare sets up DNS and HTTPS for you.
+3. Set `NEXT_PUBLIC_SITE_URL=https://fusionchurchservices.cc`, update the Supabase Site URL and
    Redirect URL (step 1.3), and redeploy.
 
 ### 5. First run

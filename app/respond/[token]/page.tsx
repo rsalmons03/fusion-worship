@@ -8,10 +8,12 @@ export default async function RespondPage({
   params,
   searchParams,
 }: {
-  params: { token: string };
-  searchParams: { done?: string };
+  params: Promise<{ token: string }>;
+  searchParams: Promise<{ done?: string }>;
 }) {
-  const info = await lookupToken(params.token);
+  const { token } = await params;
+  const { done } = await searchParams;
+  const info = await lookupToken(token);
   return (
     <main className="grid min-h-screen place-items-center px-4">
       <div className="card w-full max-w-md p-6">
@@ -27,16 +29,16 @@ export default async function RespondPage({
               {info.startTime && ` at ${fmtTime(info.startTime)}`}
               {info.planTitle && ` — ${info.planTitle}`}?
             </p>
-            {searchParams.done && (
+            {done && (
               <p className={`mt-4 rounded-md px-3 py-2 text-sm ${info.status === "accepted" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
                 {info.status === "accepted" ? "Thanks! You're confirmed." : "Got it — you've declined. Thanks for letting us know."}
               </p>
             )}
-            {!searchParams.done && info.status !== "pending" && info.status !== "unsent" && (
+            {!done && info.status !== "pending" && info.status !== "unsent" && (
               <p className="mt-4 text-sm text-muted">You&apos;ve already {info.status} this. You can change your answer below.</p>
             )}
             <form action="/api/respond" method="post" className="mt-5 flex gap-2">
-              <input type="hidden" name="token" value={params.token} />
+              <input type="hidden" name="token" value={token} />
               <button name="status" value="accepted" className="btn flex-1">Accept</button>
               <button name="status" value="declined" className="btn-secondary flex-1">Decline</button>
             </form>

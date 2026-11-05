@@ -5,8 +5,8 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config";
 type CookieToSet = { name: string; value: string; options?: CookieOptions };
 
 // Request-scoped client for Server Components / Route Handlers. Still RLS-constrained.
-export function createClient() {
-  const cookieStore = cookies();
+export async function createClient() {
+  const cookieStore = await cookies();
   return createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     cookies: {
       getAll() {

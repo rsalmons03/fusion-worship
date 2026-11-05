@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import ChordSheet from "@/components/ChordSheet";
@@ -10,7 +11,8 @@ import type { Plan, PlanItem, Song } from "@/lib/types";
 type Item = PlanItem & { songs: Pick<Song, "chordpro" | "default_key" | "author" | "bpm" | "meter"> | null };
 
 // Full-screen setlist for musicians and vocalists on a phone/tablet/stand.
-export default function LiveView({ params }: { params: { id: string } }) {
+export default function LiveView() {
+  const params = useParams<{ id: string }>();
   const [plan, setPlan] = useState<Plan | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [idx, setIdx] = useState(0);
