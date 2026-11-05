@@ -121,6 +121,7 @@ export default function PlansPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="h1">Plans</h1>
+        {me.isLeader && <Link href="/schedule" className="btn-secondary text-sm">🗓 Scheduler</Link>}
         {me.isLeader && <Link href="/templates" className="btn-ghost text-sm">Order templates</Link>}
         <div className="ml-auto flex rounded-md border border-line bg-white p-0.5 text-sm">
           <button className={`rounded px-3 py-1 ${!past ? "bg-accent-soft text-accent" : "text-muted"}`} onClick={() => setPast(false)}>Upcoming</button>

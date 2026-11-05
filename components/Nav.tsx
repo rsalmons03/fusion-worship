@@ -44,6 +44,7 @@ export default function Nav() {
     ...(me.isAdmin ? [{ href: "/people", label: "People" }] : []),
     ...(me.isLeader
       ? [
+          { href: "/schedule", label: "Scheduler (bulk)" },
           { href: "/templates", label: "Order templates" },
           { href: "/roster", label: "Roster" },
           { href: "/confirmations", label: "Confirmations" },

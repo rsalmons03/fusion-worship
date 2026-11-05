@@ -23,7 +23,7 @@ export type Health = {
 };
 
 export const RULES = {
-  breakAfterWeeks: 4,
+  breakAfterWeeks: 3, // more than 2 weeks in a row
   concernNoShows90: 2,
   concernAcceptRate: 0.5,
   readyMonths: 3,

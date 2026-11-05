@@ -1,0 +1,349 @@
+"use client";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
+import { useLocations, useProfile } from "@/components/ProfileContext";
+import Avatar, { displayName } from "@/components/Avatar";
+import Verified from "@/components/Verified";
+import { fmtDate, todayISO } from "@/lib/format";
+import { fairFill, runIfBooked, type Booking } from "@/lib/fairfill";
+import { addDays } from "@/lib/recur";
+import type { Assignment, Blockout, Plan, Position, PositionMember, Profile, Team } from "@/lib/types";
+
+/** Bulk scheduling: a grid of positions × upcoming services, with fair auto-fill. */
+export default function SchedulePage() {
+  const me = useProfile();
+  const loc = useLocations();
+  const supabase = createClient();
+  const [weeks, setWeeks] = useState(8);
+  const [teamId, setTeamId] = useState("");
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [roster, setRoster] = useState<PositionMember[]>([]);
+  const [people, setPeople] = useState<Profile[]>([]);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [blockouts, setBlockouts] = useState<Blockout[]>([]);
+  const [proposed, setProposed] = useState<Booking[]>([]);
+  const [cell, setCell] = useState<{ planId: string; positionId: string } | null>(null);
+  const [backToBack, setBackToBack] = useState(true);
+  const [maxRow, setMaxRow] = useState(2);
+  const datesFor = (pid: string, extra: Booking[] = []) => [...existingBookings(), ...proposed, ...extra].filter((b) => b.profileId === pid).map((b) => b.date);
+  const [busy, setBusy] = useState("");
+
+  const today = todayISO();
+  const until = addDays(today, weeks * 7);
+
+  const load = useCallback(async () => {
+    let pq = supabase.from("plans").select("*").gte("service_date", today).lte("service_date", until).order("service_date");
+    if (loc.current) pq = pq.eq("location_id", loc.current);
+    const [p, t, pos, pm, ppl, bo] = await Promise.all([
+      pq,
+      supabase.from("teams").select("*").order("sort"),
+      supabase.from("positions").select("*").order("sort"),
+      supabase.from("position_members").select("*"),
+      supabase.from("profiles").select("*").neq("role", "pending").order("full_name"),
+      supabase.from("blockouts").select("*").gte("ends_on", today),
+    ]);
+    const ps = (p.data ?? []) as Plan[];
+    setPlans(ps);
+    const ts = ((t.data ?? []) as Team[]).filter((x) => !loc.current || !x.location_id || x.location_id === loc.current);
+    setTeams(ts);
+    setTeamId((cur) => (cur && ts.some((x) => x.id === cur) ? cur : ts[0]?.id ?? ""));
+    setPositions(pos.data ?? []);
+    setRoster(pm.data ?? []);
+    setPeople((ppl.data ?? []) as Profile[]);
+    setBlockouts(bo.data ?? []);
+    if (ps.length) {
+      const a = await supabase.from("assignments").select("*").in("plan_id", ps.map((x) => x.id));
+      setAssignments((a.data ?? []) as Assignment[]);
+    } else setAssignments([]);
+  }, [weeks, loc.current]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    load();
+    setProposed([]);
+  }, [load]);
+
+  const teamPositions = positions.filter((p) => p.team_id === teamId);
+  const planDate = (id: string) => plans.find((p) => p.id === id)?.service_date ?? "";
+  const isBlocked = (pid: string, date: string) => blockouts.some((b) => b.profile_id === pid && b.starts_on <= date && b.ends_on >= date);
+  const isVerified = (pid: string) => !!people.find((p) => p.id === pid)?.verified;
+  const rosterFor = (posId: string) => roster.filter((r) => r.position_id === posId).map((r) => r.profile_id);
+  const name = (pid: string) => displayName(people.find((p) => p.id === pid));
+  const at = (planId: string, positionId: string) => assignments.filter((a) => a.plan_id === planId && a.position_id === positionId);
+  const prop = (planId: string, positionId: string) => proposed.filter((a) => a.planId === planId && a.positionId === positionId);
+
+  const existingBookings = (): Booking[] =>
+    assignments.map((a) => ({ planId: a.plan_id, positionId: a.position_id, profileId: a.profile_id, date: planDate(a.plan_id) }));
+
+  function autoFill(onlyPosition?: string) {
+    const slots = plans.flatMap((pl) =>
+      teamPositions
+        .filter((pos) => !onlyPosition || pos.id === onlyPosition)
+        .filter((pos) => !at(pl.id, pos.id).length && !prop(pl.id, pos.id).length)
+        .map((pos) => ({ planId: pl.id, date: pl.service_date, positionId: pos.id }))
+    );
+    const candidates = Object.fromEntries(teamPositions.map((p) => [p.id, rosterFor(p.id)]));
+    const filled = fairFill({ slots, candidates, existing: [...existingBookings(), ...proposed], blocked: isBlocked, verified: isVerified, avoidBackToBack: backToBack, maxInARow: maxRow });
+    setProposed([...proposed, ...filled]);
+    const missing = slots.length - filled.length;
+    if (!filled.length) alert(slots.length ? "No one on the roster for these positions is available. Add players to positions on People or Teams." : "Everything is already filled.");
+    else if (missing) alert(`Suggested ${filled.length}. ${missing} spot${missing === 1 ? "" : "s"} still need someone (no one available).`);
+  }
+
+  function bookEveryWeek(positionId: string, profileId: string) {
+    const add: Booking[] = [];
+    let skipped = 0;
+    let rested = 0;
+    for (const pl of plans) {
+      if (at(pl.id, positionId).some((a) => a.profile_id === profileId) || prop(pl.id, positionId).some((a) => a.profileId === profileId)) continue;
+      if (at(pl.id, positionId).length || prop(pl.id, positionId).length) continue; // already filled
+      if (isBlocked(profileId, pl.service_date)) {
+        skipped++;
+        continue;
+      }
+      if (maxRow && runIfBooked(datesFor(profileId, add), pl.service_date) > maxRow) {
+        rested++;
+        continue;
+      }
+      add.push({ planId: pl.id, date: pl.service_date, positionId, profileId });
+    }
+    setProposed([...proposed, ...add]);
+    const notes = [
+      rested ? `${rested} week${rested === 1 ? "" : "s"} left open so ${name(profileId)} isn't on more than ${maxRow} weeks in a row. Use ⚖ Fill fairly to cover them.` : "",
+      skipped ? `${skipped} week${skipped === 1 ? "" : "s"} skipped: blocked out.` : "",
+    ].filter(Boolean);
+    if (notes.length) alert(notes.join("\n"));
+  }
+
+  async function saveProposed() {
+    if (!proposed.length) return;
+    setBusy("Saving…");
+    const { error } = await supabase.from("assignments").insert(proposed.map((b) => ({ plan_id: b.planId, position_id: b.positionId, profile_id: b.profileId })));
+    setBusy("");
+    if (error) return alert(error.message);
+    setProposed([]);
+    load();
+  }
+
+  async function bookOne(planId: string, positionId: string, profileId: string) {
+    if (maxRow && runIfBooked(datesFor(profileId), planDate(planId)) > maxRow && !confirm(`${name(profileId)} would be on more than ${maxRow} weeks in a row. Book anyway?`)) return setCell(null);
+    const { error } = await supabase.from("assignments").insert({ plan_id: planId, position_id: positionId, profile_id: profileId });
+    if (error) return alert(error.message);
+    setCell(null);
+    load();
+  }
+
+  async function removeOne(id: string) {
+    await supabase.from("assignments").delete().eq("id", id);
+    load();
+  }
+
+  async function askAll() {
+    const planIds = [...new Set(assignments.filter((a) => a.status === "unsent").map((a) => a.plan_id))];
+    if (!planIds.length) return alert("Everyone booked has already been asked.");
+    if (!confirm(`Ask everyone not yet asked to confirm, across ${planIds.length} service${planIds.length === 1 ? "" : "s"}?`)) return;
+    let sent = 0;
+    for (const [i, id] of planIds.entries()) {
+      setBusy(`Asking… ${i + 1}/${planIds.length}`);
+      const res = await fetch("/api/assignments/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ planId: id }) });
+      const body = await res.json().catch(() => ({}));
+      sent += body.sent ?? 0;
+    }
+    setBusy("");
+    alert(`Asked ${sent} ${sent === 1 ? "person" : "people"} to confirm.`);
+    load();
+  }
+
+  // Fairness tally for this team in the range (booked + suggested).
+  const tally = useMemo(() => {
+    const ids = new Set(teamPositions.map((p) => p.id));
+    const m = new Map<string, number>();
+    for (const b of [...existingBookings(), ...proposed]) if (ids.has(b.positionId)) m.set(b.profileId, (m.get(b.profileId) ?? 0) + 1);
+    const everyone = new Set([...teamPositions.flatMap((p) => rosterFor(p.id)), ...m.keys()]);
+    return [...everyone].map((pid) => ({ pid, n: m.get(pid) ?? 0 })).sort((a, b) => b.n - a.n || name(a.pid).localeCompare(name(b.pid)));
+  }, [assignments, proposed, teamId, positions, roster, people]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!me.isLeader) return <p className="text-muted">Only leaders can schedule.</p>;
+
+  const unsent = assignments.filter((a) => a.status === "unsent" && teamPositions.some((p) => p.id === a.position_id)).length;
+
+  return (
+    <div className="space-y-5">
+      <header className="flex flex-wrap items-end gap-3 border-b border-line pb-4">
+        <div className="flex-1">
+          <Link href="/plans" className="text-xs font-semibold uppercase tracking-wider text-muted hover:text-ink">Plans</Link>
+          <h1 className="font-display text-3xl font-extrabold tracking-tight">Scheduler</h1>
+          <p className="text-sm text-muted">Book weeks ahead at once{loc.current ? ` for ${loc.name(loc.current)}` : ""}. People aren&apos;t booked until you tap Save.</p>
+        </div>
+        <label className="block">
+          <span className="label">Team</span>
+          <select className="input w-auto" value={teamId} onChange={(e) => { setTeamId(e.target.value); setProposed([]); }}>
+            {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+        </label>
+        <label className="block">
+          <span className="label">Look ahead</span>
+          <select className="input w-auto" value={weeks} onChange={(e) => setWeeks(Number(e.target.value))}>
+            {[4, 8, 13, 26].map((w) => <option key={w} value={w}>{w === 13 ? "3 months" : w === 26 ? "6 months" : `${w} weeks`}</option>)}
+          </select>
+        </label>
+      </header>
+
+      {!loc.current && loc.locations.length > 1 && (
+        <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">Tip: pick a location at the top (e.g. Newfield) so you only see that location&apos;s services.</p>
+      )}
+
+      {plans.length === 0 ? (
+        <p className="card text-sm text-muted">
+          No services in the next {weeks} weeks. <Link href="/plans" className="text-accent">Create them on Plans</Link> (choose &quot;Repeats every week&quot; to make them all at once).
+        </p>
+      ) : (
+        <>
+          {/* Actions */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button className="btn" onClick={() => autoFill()}>⚖ Fill empty spots fairly</button>
+            <label className="flex items-center gap-2 text-sm text-muted">
+              Max weeks in a row
+              <select className="rounded border border-line bg-white px-1 py-0.5 text-sm text-ink" value={maxRow} onChange={(e) => setMaxRow(Number(e.target.value))}>
+                {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
+                <option value={0}>No limit</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2 text-sm text-muted">
+              <input type="checkbox" checked={backToBack} onChange={(e) => setBackToBack(e.target.checked)} /> Prefer a week off between
+            </label>
+            <span className="flex-1" />
+            {unsent > 0 && !proposed.length && (
+              <button className="btn-secondary" disabled={!!busy} onClick={askAll}>{busy || `Ask ${unsent} to confirm`}</button>
+            )}
+          </div>
+
+          {proposed.length > 0 && (
+            <div className="sticky top-[57px] z-20 flex flex-wrap items-center gap-2 rounded-lg border border-accent bg-accent-soft px-4 py-3 shadow-sm">
+              <span className="flex-1 text-sm">
+                <b>{proposed.length} suggested booking{proposed.length === 1 ? "" : "s"}</b> (dashed). Review, then save.
+              </span>
+              <button className="btn-secondary" onClick={() => setProposed([])}>Discard</button>
+              <button className="btn" disabled={!!busy} onClick={saveProposed}>{busy || `Save ${proposed.length}`}</button>
+            </div>
+          )}
+
+          {/* Grid */}
+          <div className="overflow-x-auto rounded-lg border border-line bg-white shadow-sm">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-line">
+                  <th className="sticky left-0 z-10 min-w-[11rem] bg-white px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider text-muted">Position</th>
+                  {plans.map((pl) => (
+                    <th key={pl.id} className="min-w-[9.5rem] border-l border-line px-2 py-2 text-left">
+                      <Link href={`/plans/${pl.id}`} className="block hover:text-accent">
+                        <span className="block text-[11px] font-bold uppercase text-muted">{fmtDate(pl.service_date, { weekday: "short", month: undefined, day: undefined, year: undefined })}</span>
+                        <span className="font-display font-bold">{fmtDate(pl.service_date, { weekday: undefined, year: undefined })}</span>
+                      </Link>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {teamPositions.map((pos) => {
+                  const players = rosterFor(pos.id);
+                  return (
+                    <tr key={pos.id} className="border-b border-line align-top last:border-0">
+                      <th className="sticky left-0 z-10 bg-stone-50 px-3 py-2 text-left font-normal">
+                        <div className="text-xs font-bold uppercase tracking-wide">{pos.name}</div>
+                        <div className="text-[11px] text-muted">{players.length} {players.length === 1 ? "player" : "players"}</div>
+                        <div className="mt-1 flex flex-col items-start gap-0.5">
+                          <button className="text-[11px] font-semibold text-accent hover:underline" onClick={() => autoFill(pos.id)}>⚖ Fill fairly</button>
+                          <select
+                            className="max-w-[10rem] rounded border border-line bg-white px-1 py-0.5 text-[11px]"
+                            value=""
+                            onChange={(e) => e.target.value && bookEveryWeek(pos.id, e.target.value)}
+                          >
+                            <option value="">Book as often as allowed…</option>
+                            {people
+                              .filter((p) => players.includes(p.id))
+                              .map((p) => <option key={p.id} value={p.id}>{p.verified ? "✓ " : ""}{displayName(p)}</option>)}
+                          </select>
+                        </div>
+                      </th>
+                      {plans.map((pl) => {
+                        const here = at(pl.id, pos.id);
+                        const sug = prop(pl.id, pos.id);
+                        const open = cell?.planId === pl.id && cell.positionId === pos.id;
+                        return (
+                          <td key={pl.id} className="border-l border-line px-2 py-1.5">
+                            <div className="space-y-1">
+                              {here.map((a) => (
+                                <div key={a.id} className="group flex items-center gap-1.5">
+                                  <Avatar name={name(a.profile_id)} status={a.status} size="sm" />
+                                  <span className="min-w-0 flex-1 truncate text-[13px]">{name(a.profile_id)}</span>
+                                  <button className="text-xs text-muted opacity-0 hover:text-bad group-hover:opacity-100" onClick={() => removeOne(a.id)} aria-label="Remove">✕</button>
+                                </div>
+                              ))}
+                              {sug.map((b) => (
+                                <div key={b.profileId} className="flex items-center gap-1.5 rounded border border-dashed border-accent bg-accent-soft/50 px-1 py-0.5">
+                                  <Avatar name={name(b.profileId)} size="sm" />
+                                  <span className="min-w-0 flex-1 truncate text-[13px]">{name(b.profileId)}</span>
+                                  <button className="text-xs text-muted hover:text-bad" onClick={() => setProposed(proposed.filter((x) => x !== b))} aria-label="Remove suggestion">✕</button>
+                                </div>
+                              ))}
+                              {!open ? (
+                                <button
+                                  className={`w-full rounded px-1 py-0.5 text-left text-[12px] ${here.length || sug.length ? "text-muted opacity-60 hover:opacity-100" : "italic text-stone-400 hover:bg-stone-50"}`}
+                                  onClick={() => setCell({ planId: pl.id, positionId: pos.id })}
+                                >
+                                  {here.length || sug.length ? "+ add" : "Needs someone"}
+                                </button>
+                              ) : (
+                                <select
+                                  autoFocus
+                                  className="w-full rounded border border-accent bg-white px-1 py-1 text-[12px]"
+                                  value=""
+                                  onBlur={() => setCell(null)}
+                                  onChange={(e) => e.target.value && bookOne(pl.id, pos.id, e.target.value)}
+                                >
+                                  <option value="">Choose…</option>
+                                  <optgroup label={`Plays ${pos.name}`}>
+                                    {people.filter((p) => players.includes(p.id)).map((p) => (
+                                      <option key={p.id} value={p.id}>{p.verified ? "✓ " : ""}{displayName(p)}{isBlocked(p.id, pl.service_date) ? " (blocked out)" : ""}</option>
+                                    ))}
+                                  </optgroup>
+                                  <optgroup label="Everyone else">
+                                    {people.filter((p) => !players.includes(p.id)).map((p) => (
+                                      <option key={p.id} value={p.id}>{displayName(p)}{isBlocked(p.id, pl.service_date) ? " (blocked out)" : ""}</option>
+                                    ))}
+                                  </optgroup>
+                                </select>
+                              )}
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Fairness */}
+          <section className="card">
+            <h2 className="h2 mb-1">How many services each person has</h2>
+            <p className="mb-3 text-xs text-muted">Next {weeks} weeks on this team, including suggestions. Aim for even numbers among people who play the same position.</p>
+            <div className="flex flex-wrap gap-2">
+              {tally.map(({ pid, n }) => (
+                <span key={pid} className="flex items-center gap-2 rounded-full border border-line bg-white py-1 pl-1 pr-3 text-sm">
+                  <Avatar name={name(pid)} size="sm" />
+                  {name(pid)} <Verified on={isVerified(pid)} />
+                  <b className={n === 0 ? "text-muted" : "text-accent"}>{n}</b>
+                </span>
+              ))}
+              {!tally.length && <span className="text-sm text-muted">No one on this team&apos;s positions yet. Add players on People → Edit.</span>}
+            </div>
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
