@@ -128,6 +128,7 @@ export default function Nav() {
             <div className="absolute right-0 mt-2 w-48 overflow-hidden rounded-lg border border-line bg-white py-1 shadow-lg">
               <Link href="/me" className="block px-4 py-2 text-sm hover:bg-stone-50">My profile</Link>
               <button onClick={signOut} className="block w-full px-4 py-2 text-left text-sm text-muted hover:bg-stone-50">Sign out</button>
+              <AppVersion className="border-t border-line px-4 py-2" />
             </div>
           )}
         </div>
@@ -144,8 +145,18 @@ export default function Nav() {
             </Link>
           ))}
           <button onClick={signOut} className="block py-2.5 text-muted">Sign out</button>
+          <AppVersion className="py-2" />
         </nav>
       )}
     </header>
   );
+}
+
+/** Small "Version abc1234 · Nov 5, 4:10pm" line, to check which update is live. */
+export function AppVersion({ className = "" }: { className?: string }) {
+  const v = process.env.NEXT_PUBLIC_APP_VERSION;
+  const at = process.env.NEXT_PUBLIC_BUILT_AT;
+  if (!v) return null;
+  const when = at ? new Date(at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  return <div className={`text-[11px] text-muted ${className}`}>Version {v}{when && ` · ${when}`}</div>;
 }

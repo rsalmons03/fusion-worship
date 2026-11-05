@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useProfile } from "@/components/ProfileContext";
 import StatusChip from "@/components/StatusChip";
+import { AppVersion } from "@/components/Nav";
 import { fmtDate, todayISO } from "@/lib/format";
 import type { Assignment, Blockout } from "@/lib/types";
 
@@ -73,6 +74,7 @@ export default function MePage() {
           </form>
         </section>
 
+        <AppVersion />
         <section className="card">
           <h2 className="h2 mb-3">Change password</h2>
           <form onSubmit={changePassword} className="flex flex-wrap gap-2">
