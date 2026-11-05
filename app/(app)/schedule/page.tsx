@@ -9,6 +9,7 @@ import { fmtDate, todayISO } from "@/lib/format";
 import { fairFill, runIfBooked, type Booking } from "@/lib/fairfill";
 import { addDays, copyTimes } from "@/lib/recur";
 import { applyTemplate, loadTemplates } from "@/lib/templates";
+import { isSongSlot, pickSongs, songUses, SONG_GAP_DAYS } from "@/lib/songgap";
 import type { Assignment, Blockout, Plan, Position, PositionMember, Profile, Team } from "@/lib/types";
 
 /** Bulk scheduling: a grid of positions × upcoming services, with fair auto-fill. */
@@ -115,6 +116,40 @@ export default function SchedulePage() {
     setBusy("");
     if (problems.length) alert("Some had problems:\n" + problems.join("\n"));
     load();
+  }
+
+  // Fill every service's empty "Song 1–4" slots, in date order, never repeating a song within 3 weeks.
+  async function fillAllSongs() {
+    if (!plans.length) return;
+    const ids = plans.map((p) => p.id);
+    const { data: its } = await supabase.from("plan_items").select("id,plan_id,kind,title,song_id").in("plan_id", ids);
+    const items = (its ?? []) as { id: string; plan_id: string; kind: string; title: string; song_id: string | null }[];
+    const slotsTotal = items.filter(isSongSlot).length;
+    if (!slotsTotal) return alert('No empty song slots ("Song 1"…"Song 4") in these services. New services made from the standard template have them.');
+    if (!confirm(`Pick songs for ${slotsTotal} empty song slot${slotsTotal === 1 ? "" : "s"} across ${plans.length} services?\n\nNo song repeats within 3 weeks; least recently played first. You can change any of them on the plan.`)) return;
+    const { data: lib } = await supabase.from("songs").select("id,title,default_key").eq("archived", false);
+    const library = (lib ?? []) as { id: string; title: string; default_key: string | null }[];
+    const first = plans[0].service_date;
+    const last = plans[plans.length - 1].service_date;
+    const uses = await songUses(supabase, addDays(first, -SONG_GAP_DAYS * 4), addDays(last, SONG_GAP_DAYS), loc.current);
+    let filled = 0;
+    let short = 0;
+    for (const [i, pl] of [...plans].sort((a, b) => a.service_date.localeCompare(b.service_date)).entries()) {
+      setBusy(`Picking songs… ${i + 1}/${plans.length}`);
+      const mine = items.filter((x) => x.plan_id === pl.id);
+      const slots = mine.filter(isSongSlot);
+      if (!slots.length) continue;
+      const picks = pickSongs({ library, uses, date: pl.service_date, planId: pl.id, inPlan: mine.filter((x) => x.song_id).map((x) => x.song_id!), count: slots.length });
+      short += slots.length - picks.length;
+      for (const [j, sid] of picks.entries()) {
+        const song = library.find((x) => x.id === sid)!;
+        await supabase.from("plan_items").update({ kind: "song", song_id: song.id, title: song.title, song_key: song.default_key }).eq("id", slots[j].id);
+        uses.push({ songId: song.id, planId: pl.id, date: pl.service_date });
+        filled++;
+      }
+    }
+    setBusy("");
+    alert(`Picked ${filled} songs.${short ? ` ${short} slot${short === 1 ? "" : "s"} left empty: not enough songs are free under the 3-week rule. Add more songs to the library.` : ""}`);
   }
 
   async function deletePlan(pl: Plan) {
@@ -361,6 +396,11 @@ export default function SchedulePage() {
             {DAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}
           </select>
         </label>
+        {plans.length > 0 && (
+          <button className="btn-secondary" disabled={!!busy} onClick={fillAllSongs} title="4 songs per service, no song again within 3 weeks">
+            ♪ Fill songs for all services
+          </button>
+        )}
         {missing.length > 0 && (
           <button className="btn-secondary" disabled={!!busy} onClick={() => createServices(missing)}>
             {busy || `+ Create ${missing.length} missing service${missing.length === 1 ? "" : "s"}`}

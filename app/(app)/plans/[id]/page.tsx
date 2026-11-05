@@ -12,6 +12,7 @@ import PlanTimes from "@/components/plan/PlanTimes";
 import PlanFiles from "@/components/plan/PlanFiles";
 import { applyTemplate, itemsToTemplate, loadTemplates } from "@/lib/templates";
 import { addSeconds, fmtLen, lenPatch, parseLen, secOf } from "@/lib/duration";
+import { describeGap, gapWindow, isSongSlot, pickSongs, songUses, SONGS_PER_SERVICE, tooSoon, type SongUse } from "@/lib/songgap";
 import { KEYS } from "@/lib/chordpro";
 import { fmtDate, fmtTime, planLabel, todayISO } from "@/lib/format";
 import type {
@@ -58,6 +59,7 @@ export default function PlanPage() {
   const [showDetails, setShowDetails] = useState(false);
   const [editOrder, setEditOrder] = useState(false);
   const [templates, setTemplates] = useState<OrderTemplate[]>([]);
+  const [uses, setUses] = useState<SongUse[]>([]);
   useEffect(() => {
     if (editOrder) loadTemplates(supabase).then(setTemplates);
   }, [editOrder]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -104,6 +106,42 @@ export default function PlanPage() {
   useEffect(() => {
     supabase.from("plan_times").select("*").eq("plan_id", planId).order("day").order("starts").then(({ data, error }) => !error && setPlanTimes(data ?? []));
   }, [planId, tab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Songs used around this date at this location, for the 3-week rule.
+  useEffect(() => {
+    if (!plan) return;
+    const w = gapWindow(plan.service_date);
+    songUses(supabase, w.from, w.to, plan.location_id).then(setUses);
+  }, [plan?.service_date, plan?.location_id, items.map((i) => i.song_id).join()]); // eslint-disable-line react-hooks/exhaustive-deps
+  const gapNote = (songId: string | null | undefined) => {
+    if (!songId || !plan) return null;
+    const u = tooSoon(uses, songId, plan.service_date, plan.id);
+    if (!u) return null;
+    return `Played ${fmtDate(u.date, { weekday: undefined, year: undefined })} (${describeGap(u, plan.service_date).when}). Needs a 3-week gap.`;
+  };
+
+  async function fillSongs() {
+    if (!plan) return;
+    const slots = items.filter(isSongSlot);
+    if (!slots.length) return alert(`No empty song slots ("Song 1"…"Song 4") in this plan. Load the standard template or add items named Song 1–4.`);
+    const { data: lib } = await supabase.from("songs").select("id,title,default_key").eq("archived", false);
+    const library = (lib ?? []) as SongLite[];
+    const picks = pickSongs({
+      library,
+      uses,
+      date: plan.service_date,
+      planId: plan.id,
+      inPlan: items.filter((i) => i.song_id).map((i) => i.song_id!),
+      count: slots.length,
+    });
+    if (!picks.length) return alert("No songs are free: everything in the library was played within the last 3 weeks (or is coming up). Add more songs to the library.");
+    for (const [i, id] of picks.entries()) {
+      const song = library.find((x) => x.id === id)!;
+      await saveItem(slots[i].id, { kind: "song", song_id: song.id, title: song.title, song_key: song.default_key });
+    }
+    if (picks.length < slots.length) alert(`Filled ${picks.length} of ${slots.length} song slots. Not enough songs are free under the 3-week rule; add more to the library.`);
+    loadItems();
+  }
 
   // Previous / next service (same location) for the ‹ › arrows.
   useEffect(() => {
@@ -476,6 +514,24 @@ export default function PlanPage() {
                 <Link href={`/plans/${plan.id}/player`} className="btn-secondary">▶ Play</Link>
                 <Link href={`/live/${plan.id}`} className="btn-secondary">📡 Live</Link>
                 <span className="text-sm text-muted">{items.filter((i) => i.kind !== "header").length} items{totalSec > 0 && ` · ${fmtLen(totalSec)}`}</span>
+                {(() => {
+                  const songsN = items.filter((i) => i.kind === "song").length;
+                  const slotsN = items.filter(isSongSlot).length;
+                  const tooSoonN = items.filter((i) => i.kind === "song" && gapNote(i.song_id)).length;
+                  return (
+                    <>
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${songsN >= SONGS_PER_SERVICE ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"}`}>
+                        ♪ {songsN} of {SONGS_PER_SERVICE} songs
+                      </span>
+                      {tooSoonN > 0 && <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-800">⚠ {tooSoonN} repeated too soon</span>}
+                      {canEdit && slotsN > 0 && (
+                        <button className="btn-secondary py-1 text-xs" onClick={fillSongs} title="Fill empty Song slots: no repeats within 3 weeks, least recently played first">
+                          ♪ Fill songs
+                        </button>
+                      )}
+                    </>
+                  );
+                })()}
                 {canEdit && (
                   <button className={`ml-auto ${editOrder ? "btn" : "btn-secondary"}`} onClick={() => setEditOrder(!editOrder)}>
                     {editOrder ? "✓ Done editing" : "✏ Edit order"}
@@ -503,6 +559,7 @@ export default function PlanPage() {
                         onRemove={() => removeItem(it.id)}
                         onMove={(d) => move(i, d)}
                         songs={songs}
+                        gap={gapNote}
                       />
                     ))}
                   </ul>
@@ -515,12 +572,21 @@ export default function PlanPage() {
                           {sectionSec(i) > 0 && <span className="font-semibold tabular-nums text-muted">{fmtLen(sectionSec(i))}</span>}
                         </li>
                       ) : (
-                        <ViewRow key={it.id} item={it} start={times[i]} length={fmtLen(secOf(it) ?? 0)} />
+                        <ViewRow key={it.id} item={it} start={times[i]} length={fmtLen(secOf(it) ?? 0)} warn={it.kind === "song" ? gapNote(it.song_id) : null} />
                       )
                     )}
                   </ul>
                 )}
-                {editOrder && <AddBar songs={songs} onAdd={addItem} />}
+                {editOrder && (
+                  <AddBar
+                    songs={songs}
+                    gap={gapNote}
+                    onAdd={(k, sg) => {
+                      if (sg && gapNote(sg.id) && !confirm(`${sg.title}: ${gapNote(sg.id)}\n\nAdd it anyway?`)) return;
+                      addItem(k, sg);
+                    }}
+                  />
+                )}
                 {editOrder && (
                   <div className="flex flex-wrap items-center gap-2 border-t border-line bg-stone-50 px-4 py-3 print:hidden">
                     <span className="text-xs font-bold uppercase tracking-wide text-muted">Templates</span>
@@ -679,7 +745,7 @@ export default function PlanPage() {
 }
 
 /** Read-only order-of-service row: length, title, notes, song key and a listen button. */
-function ViewRow({ item, start, length }: { item: PlanItem; start: string | null; length: string }) {
+function ViewRow({ item, start, length, warn }: { item: PlanItem; start: string | null; length: string; warn?: string | null }) {
   const [listening, setListening] = useState(false);
   return (
     <li className="grid grid-cols-[5rem_minmax(0,1fr)] gap-x-2 border-b border-line px-4 py-3 last:border-0">
@@ -698,6 +764,7 @@ function ViewRow({ item, start, length }: { item: PlanItem; start: string | null
             <span className="text-sm font-semibold uppercase tracking-wide">{item.title}</span>
           )}
         </div>
+        {warn && <p className="mt-1 text-xs font-semibold text-bad">⚠ {warn}</p>}
         {item.description && <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-muted">{item.description}</p>}
         {item.song_id && (
           <button className="mt-1 text-xs font-semibold text-accent hover:underline print:hidden" onClick={() => setListening(!listening)}>
@@ -745,6 +812,7 @@ function ItemRow({
   onRemove,
   onMove,
   songs = [],
+  gap = () => null,
 }: {
   item: PlanItem;
   time: string | null;
@@ -755,13 +823,21 @@ function ItemRow({
   onRemove: () => void;
   onMove: (d: -1 | 1) => void;
   songs?: SongLite[];
+  gap?: (songId: string | null | undefined) => string | null;
 }) {
   const [listening, setListening] = useState(false);
   const [picking, setPicking] = useState(false);
   const [q, setQ] = useState("");
   const isSlot = item.kind === "item" && /^(song\b|closing song|worship song)/i.test(item.title.trim());
-  const found = q.trim() ? songs.filter((s) => `${s.title} ${s.author ?? ""}`.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 6) : [];
+  const found = q.trim()
+    ? songs
+        .filter((s) => `${s.title} ${s.author ?? ""}`.toLowerCase().includes(q.trim().toLowerCase()))
+        .sort((a, b) => Number(!!gap(a.id)) - Number(!!gap(b.id)))
+        .slice(0, 8)
+    : [];
   const pick = (s: SongLite) => {
+    const g = gap(s.id);
+    if (g && !confirm(`${s.title}: ${g}\n\nUse it anyway?`)) return;
     onSave({ kind: "song", song_id: s.id, title: s.title, song_key: s.default_key });
     setPicking(false);
     setQ("");
@@ -816,6 +892,7 @@ function ItemRow({
         ) : (
           item.description && <p className="whitespace-pre-wrap text-sm text-muted">{item.description}</p>
         )}
+        {item.kind === "song" && gap(item.song_id) && <p className="text-xs font-semibold text-bad">⚠ {gap(item.song_id)}</p>}
         {canEdit && (isSlot || item.kind === "song") && (
           <div className="print:hidden">
             {!picking ? (
@@ -829,8 +906,11 @@ function ItemRow({
                   <ul className="absolute z-10 mt-1 w-full overflow-hidden rounded-md border border-line bg-white shadow-lg">
                     {found.map((s) => (
                       <li key={s.id}>
-                        <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent-soft" onClick={() => pick(s)}>
-                          <span className="flex-1">{s.title} <span className="text-muted">{s.author}</span></span>
+                        <button className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent-soft ${gap(s.id) ? "opacity-60" : ""}`} onClick={() => pick(s)}>
+                          <span className="flex-1">
+                            {s.title} <span className="text-muted">{s.author}</span>
+                            {gap(s.id) && <span className="block text-[11px] text-bad">Too soon · {gap(s.id)}</span>}
+                          </span>
                           {s.default_key && <span className="text-xs text-muted">{s.default_key}</span>}
                         </button>
                       </li>
@@ -886,10 +966,13 @@ function Controls({ first, last, onMove, onRemove }: { first: boolean; last: boo
   );
 }
 
-function AddBar({ songs, onAdd }: { songs: SongLite[]; onAdd: (k: ItemKind, s?: SongLite) => void }) {
+function AddBar({ songs, onAdd, gap = () => null }: { songs: SongLite[]; onAdd: (k: ItemKind, s?: SongLite) => void; gap?: (id: string) => string | null }) {
   const [q, setQ] = useState("");
   const matches = q.trim()
-    ? songs.filter((s) => `${s.title} ${s.author ?? ""}`.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 8)
+    ? songs
+        .filter((s) => `${s.title} ${s.author ?? ""}`.toLowerCase().includes(q.trim().toLowerCase()))
+        .sort((a, b) => Number(!!gap(a.id)) - Number(!!gap(b.id)))
+        .slice(0, 8)
     : [];
   return (
     <div className="space-y-2 p-4 print:hidden">
@@ -906,7 +989,11 @@ function AddBar({ songs, onAdd }: { songs: SongLite[]; onAdd: (k: ItemKind, s?: 
                     setQ("");
                   }}
                 >
-                  <span className="flex-1">{s.title}<span className="ml-2 text-muted">{s.author}</span></span>
+                  <span className={`flex-1 ${gap(s.id) ? "opacity-60" : ""}`}>
+                    {s.title}
+                    <span className="ml-2 text-muted">{s.author}</span>
+                    {gap(s.id) && <span className="block text-[11px] text-bad">Too soon · {gap(s.id)}</span>}
+                  </span>
                   {s.default_key && <span className="text-xs text-muted">{s.default_key}</span>}
                 </button>
               </li>

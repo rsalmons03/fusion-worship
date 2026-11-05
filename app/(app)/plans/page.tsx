@@ -112,7 +112,7 @@ export default function PlansPage() {
         if (err) problems.push(`${date} order: ${err}`);
       }
       if (template && form.copyItems) {
-        const err = await copyItems(supabase, template.id, plan.id);
+        const err = await copyItems(supabase, template.id, plan.id, date, loc.locations.length ? form.location || null : null);
         if (err) problems.push(`${date} order: ${err}`);
       }
       if (template && form.copyTimes) {

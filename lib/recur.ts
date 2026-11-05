@@ -70,13 +70,38 @@ export async function copyTimes(supabase: SupabaseClient, fromPlanId: string, fr
   return e2?.message ?? null;
 }
 
-/** Copies the order of service (songs, items, headers, notes). No people. */
-export async function copyItems(supabase: SupabaseClient, fromPlanId: string, toPlanId: string) {
+/**
+ * Copies the order of service (songs, items, headers, notes). No people.
+ * With `toDate`, a song played within 3 weeks of that date (at the location) becomes an empty
+ * "Song N" slot to fill, so songs aren't repeated too soon.
+ */
+export async function copyItems(supabase: SupabaseClient, fromPlanId: string, toPlanId: string, toDate?: string, locationId?: string | null) {
   const { data } = await supabase.from("plan_items").select("*").eq("plan_id", fromPlanId).order("position");
   if (!data?.length) return null;
-  const { error } = await supabase.from("plan_items").insert(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    data.map(({ id, plan_id, songs, ...rest }) => ({ ...rest, plan_id: toPlanId }))
-  );
+  let recent = new Set<string>();
+  if (toDate) {
+    const { songUses, SONG_GAP_DAYS } = await import("./songgap");
+    const uses = await songUses(supabase, addDays(toDate, -SONG_GAP_DAYS + 1), addDays(toDate, SONG_GAP_DAYS - 1), locationId ?? null);
+    recent = new Set(uses.filter((u) => u.planId !== toPlanId).map((u) => u.songId));
+  }
+  let n = 0;
+  const rows = data.map(({ id, plan_id, songs, ...rest }) => {
+    void id;
+    void plan_id;
+    void songs;
+    if (rest.kind !== "song") return { ...rest, plan_id: toPlanId };
+    n++;
+    if (!recent.has(rest.song_id)) return { ...rest, plan_id: toPlanId };
+    return {
+      ...rest,
+      plan_id: toPlanId,
+      kind: "item",
+      title: `Song ${n}`,
+      song_id: null,
+      song_key: null,
+      description: `Pick a new song (${rest.title} was played too recently)${rest.description ? "\n" + rest.description : ""}`,
+    };
+  });
+  const { error } = await supabase.from("plan_items").insert(rows);
   return error?.message ?? null;
 }
