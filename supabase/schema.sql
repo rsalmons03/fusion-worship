@@ -561,3 +561,6 @@ where t.name ilike 'worship%band%' and not exists (select 1 from positions p whe
 insert into positions (team_id, name, sort, needed, can_double)
 select t.id, 'Backup Vocals', 2, 3, true from teams t
 where t.name ilike 'worship%band%' and not exists (select 1 from positions p where p.team_id = t.id and p.name ilike 'backup vocal%');
+
+-- ───────────────────────── Position levels (main / half / only if needed) ─────────────────────────
+alter table position_members add column if not exists weight numeric not null default 1 check (weight >= 0 and weight <= 1);

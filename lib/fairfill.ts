@@ -24,6 +24,7 @@ export function fairFill({
   avoidBackToBack = true,
   maxInARow = 2,
   canDouble = () => false,
+  weight = () => 1,
 }: {
   slots: Slot[]; // empty spots to fill, any order
   candidates: Record<string, string[]>; // positionId → people who play it
@@ -35,6 +36,8 @@ export function fairFill({
   maxInARow?: number;
   /** Positions someone may do alongside another one in the same service (e.g. vocals). */
   canDouble?: (positionId: string) => boolean;
+  /** Share of a position's rotation: 1 main, 0.5 half as often, 0 only if no one else can. */
+  weight?: (positionId: string, profileId: string) => number;
 }): Booking[] {
   const out: Booking[] = [];
   const all = () => [...existing, ...out];
@@ -49,18 +52,21 @@ export function fairFill({
       .map((p) => {
         const mine = all().filter((b) => b.profileId === p);
         const countHere = mine.filter((b) => b.positionId === s.positionId).length;
+        const w = weight(s.positionId, p);
+        // Services relative to their share: a ½ player with 2 counts like a main player with 4.
+        const load = w > 0 ? (countHere + 1) / w : 1e6 + countHere;
         // Same service: never the same position twice; a second position only if one of them can double up.
         const busySamePlan = mine.some((b) => b.planId === s.planId && (b.positionId === s.positionId || !(canDouble(b.positionId) || canDouble(s.positionId))));
         const alsoServing = mine.some((b) => b.planId === s.planId);
         const near = mine.some((b) => b.planId !== s.planId && dayDiff(b.date, s.date) <= 7);
         const last = mine.map((b) => b.date).sort().at(-1) ?? "";
-        return { p, countHere, busySamePlan, alsoServing, near, last };
+        return { p, load, busySamePlan, alsoServing, near, last };
       })
       .sort(
         (a, b) =>
           Number(a.busySamePlan) - Number(b.busySamePlan) || // don't double-book the same service
           Number(a.alsoServing) - Number(b.alsoServing) || // prefer someone not already on this service
-          a.countHere - b.countHere || // fewest services on this position first
+          a.load - b.load || // fewest services for their share first ("only if needed" last)
           (avoidBackToBack ? Number(a.near) - Number(b.near) : 0) || // rest between weeks
           a.last.localeCompare(b.last) || // longest since they last served
           Number(verified(b.p)) - Number(verified(a.p)) // confirmed members first

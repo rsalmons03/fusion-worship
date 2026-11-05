@@ -167,7 +167,14 @@ export default function TeamsPage() {
                         {(p.needed ?? 1) > 1 && <span className="ml-1 text-xs font-normal text-muted">×{p.needed}</span>}
                         {p.can_double && <span className="ml-1 rounded-sm bg-sky-50 px-1 text-[10px] font-semibold uppercase text-sky-700" title="Can be done alongside another position in the same service">+ doubles</span>}
                       </span>
-                      <span className="flex-1 truncate text-muted">{members.map(name).join(", ") || "No one yet"}</span>
+                      <span className="flex-1 truncate text-muted">
+                        {members
+                          .map((pid) => {
+                            const w = roster.find((r) => r.position_id === p.id && r.profile_id === pid)?.weight ?? 1;
+                            return name(pid) + (w >= 1 ? "" : w === 0 ? " (if needed)" : " (½)");
+                          })
+                          .join(", ") || "No one yet"}
+                      </span>
                       {canEdit && <button className="btn-ghost" onClick={() => setOpenPos(isOpen ? null : p.id)}>{isOpen ? "Done" : "Edit"}</button>}
                       {canEdit && isOpen && <button className="btn-ghost text-bad" onClick={() => deletePosition(p)}>✕</button>}
                     </div>

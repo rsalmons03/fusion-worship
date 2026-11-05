@@ -71,7 +71,8 @@ export type Position = {
   /** Can be done alongside another position in the same service (e.g. singing while playing). */
   can_double?: boolean;
 };
-export type PositionMember = { position_id: string; profile_id: string };
+/** weight: 1 = main, 0.5 = about half as often, 0 = only if needed. */
+export type PositionMember = { position_id: string; profile_id: string; weight?: number };
 
 export type AssignmentStatus = "unsent" | "pending" | "accepted" | "declined";
 export type Assignment = {

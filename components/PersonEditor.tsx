@@ -45,6 +45,13 @@ export default function PersonEditor({
   saveRef.current = save;
   useEffect(() => () => void saveRef.current(), []);
   const mine = new Set(members.filter((m) => m.profile_id === p.id).map((m) => m.position_id));
+  const weightOf = (posId: string) => members.find((m) => m.profile_id === p.id && m.position_id === posId)?.weight ?? 1;
+
+  async function setWeight(posId: string, weight: number) {
+    const { error } = await supabase.from("position_members").update({ weight }).eq("position_id", posId).eq("profile_id", p.id);
+    if (error) alert(/weight/.test(error.message) ? "Main / ½ / only-if-needed needs the database update 013 (run ALL_UPDATES.sql). " + error.message : error.message);
+    onChanged();
+  }
 
   // Last values that are known to be saved, so we only send real changes.
   const lastSaved = useRef({ full_name: p.full_name ?? "", email: (p.email ?? "").toLowerCase(), phone: p.phone ?? "" });
@@ -119,7 +126,9 @@ export default function PersonEditor({
       {/* Positions */}
       <div>
         <div className="label">Positions (what they play / do)</div>
-        <p className="mb-2 text-xs text-muted">Tap to add or remove. These put them on the roster and the scheduling lists.</p>
+        <p className="mb-2 text-xs text-muted">
+          Tap to add or remove. Then choose how often: <b>Main</b> (full share), <b>½</b> (about half as often, e.g. a drummer who covers keys), or <b>If needed</b> (only when no one else can).
+        </p>
         {teams.length === 0 && <p className="text-sm text-muted">No teams yet. Create one on the Teams page first.</p>}
         <div className="space-y-2">
           {teams.map((t) => {
@@ -131,16 +140,32 @@ export default function PersonEditor({
                 <div className="flex flex-wrap gap-1.5">
                   {ps.map((x) => {
                     const on = mine.has(x.id);
+                    const w = weightOf(x.id);
                     return (
-                      <button
-                        key={x.id}
-                        type="button"
-                        onClick={() => togglePosition(x.id)}
-                        className={`rounded-full border px-3 py-1 text-sm ${on ? "border-accent bg-accent text-white" : "border-line bg-white hover:border-accent"}`}
-                      >
-                        {on ? "✓ " : "+ "}
-                        {x.name}
-                      </button>
+                      <span key={x.id} className={`inline-flex items-center overflow-hidden rounded-full border text-sm ${on ? "border-accent" : "border-line"}`}>
+                        <button
+                          type="button"
+                          onClick={() => togglePosition(x.id)}
+                          className={`px-3 py-1 ${on ? "bg-accent text-white" : "bg-white hover:bg-stone-50"}`}
+                        >
+                          {on ? "✓ " : "+ "}
+                          {x.name}
+                          {on && w < 1 && <span className="ml-1 opacity-80">{w === 0 ? "(if needed)" : "(½)"}</span>}
+                        </button>
+                        {on && (
+                          <select
+                            aria-label={`How often on ${x.name}`}
+                            className="border-l border-accent bg-white px-1 py-1 text-xs text-ink"
+                            value={String(w)}
+                            onChange={(e) => setWeight(x.id, Number(e.target.value))}
+                            title="Main = full share · ½ = about half as often · Only if needed = when no one else can"
+                          >
+                            <option value="1">Main</option>
+                            <option value="0.5">½</option>
+                            <option value="0">If needed</option>
+                          </select>
+                        )}
+                      </span>
                     );
                   })}
                 </div>

@@ -1,4 +1,4 @@
--- ALL database updates (002 → 012) in one file. Safe to run more than once:
+-- ALL database updates (002 → 013) in one file. Safe to run more than once:
 -- anything already done is skipped. Supabase → SQL Editor → New query → paste ALL → Run.
 
 -- ═══════════ 002_locations.sql ═══════════
@@ -320,6 +320,12 @@ where t.name ilike 'worship%band%' and not exists (select 1 from positions p whe
 insert into positions (team_id, name, sort, needed, can_double)
 select t.id, 'Backup Vocals', 2, 3, true from teams t
 where t.name ilike 'worship%band%' and not exists (select 1 from positions p where p.team_id = t.id and p.name ilike 'backup vocal%');
+
+-- ═══════════ 013_position_levels.sql ═══════════
+-- How much of a position's rotation each person takes:
+--   1 = main, 0.5 = about half as often, 0 = only if needed.
+-- Run AFTER 002_locations.sql. Safe to run more than once.
+alter table position_members add column if not exists weight numeric not null default 1 check (weight >= 0 and weight <= 1);
 
 -- Make the app see the changes right away
 notify pgrst, 'reload schema';

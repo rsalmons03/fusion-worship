@@ -128,6 +128,11 @@ export default function SchedulePage() {
   const isBlocked = (pid: string, date: string) => blockouts.some((b) => b.profile_id === pid && b.starts_on <= date && b.ends_on >= date);
   const isVerified = (pid: string) => !!people.find((p) => p.id === pid)?.verified;
   const rosterFor = (posId: string) => roster.filter((r) => r.position_id === posId).map((r) => r.profile_id);
+  const weightFor = (posId: string, pid: string) => roster.find((r) => r.position_id === posId && r.profile_id === pid)?.weight ?? 1;
+  const levelTag = (posId: string, pid: string) => {
+    const w = weightFor(posId, pid);
+    return w >= 1 ? "" : w === 0 ? " (if needed)" : " (½)";
+  };
   const name = (pid: string) => displayName(people.find((p) => p.id === pid));
   const at = (planId: string, positionId: string) => assignments.filter((a) => a.plan_id === planId && a.position_id === positionId);
   const prop = (planId: string, positionId: string) => proposed.filter((a) => a.planId === planId && a.positionId === positionId);
@@ -145,7 +150,7 @@ export default function SchedulePage() {
         })
     );
     const candidates = Object.fromEntries(teamPositions.map((p) => [p.id, rosterFor(p.id)]));
-    const filled = fairFill({ slots, candidates, existing: [...existingBookings(), ...proposed], blocked: isBlocked, verified: isVerified, avoidBackToBack: backToBack, maxInARow: maxRow, canDouble: (id) => !!positions.find((p) => p.id === id)?.can_double });
+    const filled = fairFill({ slots, candidates, existing: [...existingBookings(), ...proposed], blocked: isBlocked, verified: isVerified, avoidBackToBack: backToBack, maxInARow: maxRow, canDouble: (id) => !!positions.find((p) => p.id === id)?.can_double, weight: weightFor });
     setProposed([...proposed, ...filled]);
     const missing = slots.length - filled.length;
     if (!filled.length) alert(slots.length ? "No one on the roster for these positions is available. Add players to positions on People or Teams." : "Everything is already filled.");
@@ -282,7 +287,7 @@ export default function SchedulePage() {
             <option value="">Choose…</option>
             <optgroup label={`Plays ${pos.name}`}>
               {people.filter((p) => players.includes(p.id)).map((p) => (
-                <option key={p.id} value={p.id}>{p.verified ? "✓ " : ""}{displayName(p)}{isBlocked(p.id, pl.service_date) ? " (blocked out)" : ""}</option>
+                <option key={p.id} value={p.id}>{p.verified ? "✓ " : ""}{displayName(p)}{levelTag(pos.id, p.id)}{isBlocked(p.id, pl.service_date) ? " (blocked out)" : ""}</option>
               ))}
             </optgroup>
             <optgroup label="Everyone else">
@@ -452,7 +457,7 @@ export default function SchedulePage() {
                             <optgroup key={pos.id} label={pos.name}>
                               {people
                                 .filter((p) => rosterFor(pos.id).includes(p.id))
-                                .map((p) => <option key={p.id} value={`${pos.id}|${p.id}`}>{p.verified ? "✓ " : ""}{displayName(p)}</option>)}
+                                .map((p) => <option key={p.id} value={`${pos.id}|${p.id}`}>{p.verified ? "✓ " : ""}{displayName(p)}{levelTag(pos.id, p.id)}</option>)}
                             </optgroup>
                           ))}
                         </select>
