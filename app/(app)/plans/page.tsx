@@ -75,8 +75,21 @@ export default function PlansPage() {
     setCreating(true);
     const st = types.find((t) => t.id === form.type);
     const problems: string[] = [];
+    // Skip dates that already have a service at this location (prevents doubles).
+    let eq = supabase.from("plans").select("service_date").in("service_date", dates);
+    if (loc.locations.length && form.location) eq = eq.eq("location_id", form.location);
+    const { data: taken } = await eq;
+    const already = new Set((taken ?? []).map((x: { service_date: string }) => x.service_date));
+    if (already.size) {
+      const list = [...already].map((d) => fmtDate(d, { weekday: undefined, year: undefined })).join(", ");
+      if (dates.length === already.size) {
+        setCreating(false);
+        return alert(`There's already a service on ${list}. Open it from the list below instead.`);
+      }
+      problems.push(`Skipped (already have a service): ${list}`);
+    }
     let firstId: string | null = null;
-    for (const [i, date] of dates.entries()) {
+    for (const [i, date] of dates.filter((d) => !already.has(d)).entries()) {
       setProgress(dates.length > 1 ? `Creating ${i + 1} of ${dates.length}…` : "");
       const { data: plan, error } = await supabase
         .from("plans")
@@ -109,7 +122,7 @@ export default function PlansPage() {
     }
     setCreating(false);
     setProgress("");
-    if (problems.length) alert("Some services had problems:\n" + problems.join("\n"));
+    if (problems.length) alert(problems.join("\n"));
     if (dates.length === 1 && firstId) router.push(`/plans/${firstId}`);
     else {
       setReload((n) => n + 1);

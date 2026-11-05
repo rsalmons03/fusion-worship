@@ -7,7 +7,8 @@ import Avatar, { displayName } from "@/components/Avatar";
 import Verified from "@/components/Verified";
 import { fmtDate, todayISO } from "@/lib/format";
 import { fairFill, runIfBooked, type Booking } from "@/lib/fairfill";
-import { addDays } from "@/lib/recur";
+import { addDays, copyTimes } from "@/lib/recur";
+import { applyTemplate, loadTemplates } from "@/lib/templates";
 import type { Assignment, Blockout, Plan, Position, PositionMember, Profile, Team } from "@/lib/types";
 
 /** Bulk scheduling: a grid of positions × upcoming services, with fair auto-fill. */
@@ -30,6 +31,7 @@ export default function SchedulePage() {
   const [maxRow, setMaxRow] = useState(2);
   const datesFor = (pid: string, extra: Booking[] = []) => [...existingBookings(), ...proposed, ...extra].filter((b) => b.profileId === pid).map((b) => b.date);
   const [busy, setBusy] = useState("");
+  const [serviceDay, setServiceDay] = useState(0); // 0 = Sunday
 
   const today = todayISO();
   const until = addDays(today, weeks * 7);
@@ -65,6 +67,63 @@ export default function SchedulePage() {
   }, [load]);
 
   const teamPositions = positions.filter((p) => p.team_id === teamId);
+
+  // Every service day in the range, whether or not a service exists yet.
+  const dow = (d: string) => new Date(d + "T12:00:00").getDay();
+  const expected = useMemo(() => {
+    const out: string[] = [];
+    let d = today;
+    while (dow(d) !== serviceDay) d = addDays(d, 1);
+    for (; d <= until; d = addDays(d, 7)) out.push(d);
+    return out;
+  }, [today, until, serviceDay]); // eslint-disable-line react-hooks/exhaustive-deps
+  const missing = expected.filter((d) => !plans.some((p) => p.service_date === d));
+  const dupes = [...new Set(plans.map((p) => p.service_date))].filter((d) => plans.filter((p) => p.service_date === d).length > 1);
+  const offDay = plans.filter((p) => dow(p.service_date) !== serviceDay);
+  const columns = [...plans.map((p) => ({ date: p.service_date, plan: p as Plan | null })), ...missing.map((d) => ({ date: d, plan: null as Plan | null }))].sort((a, b) =>
+    a.date.localeCompare(b.date)
+  );
+  const DAYS = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
+
+  async function createServices(dates: string[]) {
+    if (!loc.current) return alert("Pick the location at the top first (e.g. Newfield), so the services are made for the right campus.");
+    if (!dates.length) return;
+    if (dates.length > 1 && !confirm(`Create ${dates.length} services for ${loc.name(loc.current)}? (${dates.map((d) => fmtDate(d, { weekday: undefined, year: undefined })).join(", ")})`)) return;
+    // Start each from the location's standard template, with the title and times of the latest service there.
+    const templates = await loadTemplates(supabase);
+    const tpl = templates.find((t) => t.is_default && t.location_id === loc.current) ?? templates.find((t) => t.is_default && !t.location_id);
+    const { data: last } = await supabase.from("plans").select("*").eq("location_id", loc.current).order("service_date", { ascending: false }).limit(1);
+    const model = (last?.[0] ?? null) as Plan | null;
+    const problems: string[] = [];
+    for (const [i, date] of dates.entries()) {
+      setBusy(`Creating ${i + 1} of ${dates.length}…`);
+      const { data: plan, error } = await supabase
+        .from("plans")
+        .insert({ service_date: date, location_id: loc.current, title: model?.title ?? null, start_time: tpl?.start_time ?? model?.start_time ?? null, service_type_id: model?.service_type_id ?? null })
+        .select()
+        .single();
+      if (error || !plan) {
+        problems.push(`${date}: ${error?.message ?? "could not create"}`);
+        continue;
+      }
+      if (tpl) {
+        const err = await applyTemplate(supabase, tpl, plan.id, "append");
+        if (err) problems.push(`${date} order: ${err}`);
+      }
+      if (model) await copyTimes(supabase, model.id, model.service_date, plan.id, date);
+    }
+    setBusy("");
+    if (problems.length) alert("Some had problems:\n" + problems.join("\n"));
+    load();
+  }
+
+  async function deletePlan(pl: Plan) {
+    const n = assignments.filter((a) => a.plan_id === pl.id).length;
+    if (!confirm(`Delete the ${fmtDate(pl.service_date, { year: undefined })} service${pl.title ? ` "${pl.title}"` : ""}?${n ? ` ${n} people are booked on it.` : ""} This can't be undone.`)) return;
+    const { error } = await supabase.from("plans").delete().eq("id", pl.id);
+    if (error) return alert(error.message);
+    load();
+  }
   const planDate = (id: string) => plans.find((p) => p.id === id)?.service_date ?? "";
   const isBlocked = (pid: string, date: string) => blockouts.some((b) => b.profile_id === pid && b.starts_on <= date && b.ends_on >= date);
   const isVerified = (pid: string) => !!people.find((p) => p.id === pid)?.verified;
@@ -197,7 +256,35 @@ export default function SchedulePage() {
         <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">Tip: pick a location at the top (e.g. Newfield) so you only see that location&apos;s services.</p>
       )}
 
-      {plans.length === 0 ? (
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-2 text-sm text-muted">
+          Services on
+          <select className="rounded border border-line bg-white px-1 py-0.5 text-sm text-ink" value={serviceDay} onChange={(e) => setServiceDay(Number(e.target.value))}>
+            {DAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}
+          </select>
+        </label>
+        {missing.length > 0 && (
+          <button className="btn-secondary" disabled={!!busy} onClick={() => createServices(missing)}>
+            {busy || `+ Create ${missing.length} missing service${missing.length === 1 ? "" : "s"}`}
+          </button>
+        )}
+      </div>
+      {(dupes.length > 0 || offDay.length > 0) && (
+        <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          {dupes.map((d) => (
+            <p key={d}>
+              ⚠ <b>{fmtDate(d, { year: undefined })}</b> has {plans.filter((p) => p.service_date === d).length} services. Delete the extra one with 🗑 at the top of its column.
+            </p>
+          ))}
+          {offDay.map((p) => (
+            <p key={p.id}>
+              ⚠ <b>{fmtDate(p.service_date, { year: undefined })}</b> isn&apos;t on a {DAYS[serviceDay].slice(0, -1)}. If it was made by mistake, delete it with 🗑 at the top of its column.
+            </p>
+          ))}
+        </div>
+      )}
+
+      {columns.length === 0 ? (
         <p className="card text-sm text-muted">
           No services in the next {weeks} weeks. <Link href="/plans" className="text-accent">Create them on Plans</Link> (choose &quot;Repeats every week&quot; to make them all at once).
         </p>
@@ -238,14 +325,32 @@ export default function SchedulePage() {
               <thead>
                 <tr className="border-b border-line">
                   <th className="sticky left-0 z-10 min-w-[11rem] bg-white px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider text-muted">Position</th>
-                  {plans.map((pl) => (
-                    <th key={pl.id} className="min-w-[9.5rem] border-l border-line px-2 py-2 text-left">
-                      <Link href={`/plans/${pl.id}`} className="block hover:text-accent">
-                        <span className="block text-[11px] font-bold uppercase text-muted">{fmtDate(pl.service_date, { weekday: "short", month: undefined, day: undefined, year: undefined })}</span>
-                        <span className="font-display font-bold">{fmtDate(pl.service_date, { weekday: undefined, year: undefined })}</span>
-                      </Link>
-                    </th>
-                  ))}
+                  {columns.map(({ date, plan: pl }) => {
+                    const warn = pl && (dow(date) !== serviceDay || dupes.includes(date));
+                    return (
+                      <th key={pl?.id ?? `missing-${date}`} className={`min-w-[9.5rem] border-l border-line px-2 py-2 text-left ${pl ? "" : "bg-stone-50"} ${warn ? "bg-amber-50" : ""}`}>
+                        <div className="flex items-start gap-1">
+                          <div className="flex-1">
+                            <span className={`block text-[11px] font-bold uppercase ${warn ? "text-amber-700" : "text-muted"}`}>
+                              {fmtDate(date, { weekday: "short", month: undefined, day: undefined, year: undefined })}
+                              {warn && " ⚠"}
+                            </span>
+                            {pl ? (
+                              <Link href={`/plans/${pl.id}`} className="font-display font-bold hover:text-accent">{fmtDate(date, { weekday: undefined, year: undefined })}</Link>
+                            ) : (
+                              <span className="font-display font-bold text-muted">{fmtDate(date, { weekday: undefined, year: undefined })}</span>
+                            )}
+                          </div>
+                          {pl && warn && (
+                            <button className="text-xs text-muted hover:text-bad" onClick={() => deletePlan(pl)} title="Delete this service" aria-label="Delete this service">🗑</button>
+                          )}
+                        </div>
+                        {!pl && (
+                          <button className="mt-1 text-[11px] font-semibold text-accent hover:underline" disabled={!!busy} onClick={() => createServices([date])}>+ Create service</button>
+                        )}
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
@@ -274,7 +379,8 @@ export default function SchedulePage() {
                           </select>
                         </div>
                       </th>
-                      {plans.map((pl) => {
+                      {columns.map(({ date, plan: pl }) => {
+                        if (!pl) return <td key={`missing-${date}`} className="border-l border-line bg-stone-50 px-2 py-1.5 text-[11px] italic text-stone-400">No service yet</td>;
                         const here = at(pl.id, pos.id);
                         const sug = prop(pl.id, pos.id);
                         const open = cell?.planId === pl.id && cell.positionId === pos.id;
