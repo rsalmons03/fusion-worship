@@ -225,8 +225,15 @@ export default function SchedulePage() {
   // Fairness tally for this team in the range (booked + suggested).
   const tally = useMemo(() => {
     const ids = new Set(teamPositions.map((p) => p.id));
-    const m = new Map<string, number>();
-    for (const b of [...existingBookings(), ...proposed]) if (ids.has(b.positionId)) m.set(b.profileId, (m.get(b.profileId) ?? 0) + 1);
+    // Count services, not roles: three jobs on one Sunday is still one service.
+    const seen = new Map<string, Set<string>>();
+    for (const b of [...existingBookings(), ...proposed]) {
+      if (!ids.has(b.positionId)) continue;
+      const set = seen.get(b.profileId) ?? new Set<string>();
+      set.add(b.planId);
+      seen.set(b.profileId, set);
+    }
+    const m = new Map([...seen].map(([pid, set]) => [pid, set.size]));
     const everyone = new Set([...teamPositions.flatMap((p) => rosterFor(p.id)), ...m.keys()]);
     return [...everyone].map((pid) => ({ pid, n: m.get(pid) ?? 0 })).sort((a, b) => b.n - a.n || name(a.pid).localeCompare(name(b.pid)));
   }, [assignments, proposed, teamId, positions, roster, people]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -244,6 +251,20 @@ export default function SchedulePage() {
     } else groups.push({ key: pos.id, label: pos.name, positions: [pos] });
   }
 
+  const posName = (id: string) => positions.find((p) => p.id === id)?.name ?? "";
+  const rolesOn = (planId: string, pid: string) => [
+    ...assignments.filter((a) => a.plan_id === planId && a.profile_id === pid).map((a) => a.position_id),
+    ...proposed.filter((b) => b.planId === planId && b.profileId === pid).map((b) => b.positionId),
+  ];
+  const Multi = ({ planId, pid }: { planId: string; pid: string }) => {
+    const roles = rolesOn(planId, pid);
+    return roles.length > 1 ? (
+      <span className="shrink-0 rounded-full bg-violet-100 px-1.5 text-[10px] font-bold text-violet-800" title={roles.map(posName).join(" · ")}>
+        ×{roles.length}
+      </span>
+    ) : null;
+  };
+
   function renderCell(pl: Plan, pos: Position) {
     const here = at(pl.id, pos.id);
     const sug = prop(pl.id, pos.id);
@@ -255,6 +276,7 @@ export default function SchedulePage() {
           <div key={a.id} className="group flex items-center gap-1.5">
             <Avatar name={name(a.profile_id)} status={a.status} size="sm" />
             <span className="min-w-0 flex-1 truncate text-[13px]">{name(a.profile_id)}</span>
+            <Multi planId={pl.id} pid={a.profile_id} />
             <button className="text-xs text-muted opacity-0 hover:text-bad group-hover:opacity-100" onClick={() => removeOne(a.id)} aria-label="Remove">✕</button>
           </div>
         ))}
@@ -262,6 +284,7 @@ export default function SchedulePage() {
           <div key={b.profileId} className="flex items-center gap-1.5 rounded border border-dashed border-accent bg-accent-soft/50 px-1 py-0.5">
             <Avatar name={name(b.profileId)} size="sm" />
             <span className="min-w-0 flex-1 truncate text-[13px]">{name(b.profileId)}</span>
+            <Multi planId={pl.id} pid={b.profileId} />
             <button className="text-xs text-muted hover:text-bad" onClick={() => setProposed(proposed.filter((x) => x !== b))} aria-label="Remove suggestion">✕</button>
           </div>
         ))}
@@ -481,6 +504,32 @@ export default function SchedulePage() {
                     )}
                   </tr>
                 ))}
+                <tr className="border-t-2 border-line bg-stone-50 align-top">
+                  <th className="sticky left-0 z-10 bg-stone-100 px-3 py-2 text-left font-normal">
+                    <div className="text-xs font-bold uppercase tracking-wide">Who&apos;s serving</div>
+                    <div className="text-[11px] text-muted">Each person once, with all their roles that day</div>
+                  </th>
+                  {columns.map(({ date, plan: pl }) => {
+                    if (!pl) return <td key={`missing-${date}`} className="border-l border-line" />;
+                    const ids = [...new Set([...assignments.filter((a) => a.plan_id === pl.id).map((a) => a.profile_id), ...proposed.filter((b) => b.planId === pl.id).map((b) => b.profileId)])];
+                    const rows = ids
+                      .map((pid) => ({ pid, roles: rolesOn(pl.id, pid) }))
+                      .sort((a, b) => b.roles.length - a.roles.length || name(a.pid).localeCompare(name(b.pid)));
+                    return (
+                      <td key={pl.id} className="border-l border-line px-2 py-2">
+                        <div className="mb-1 text-[11px] font-semibold text-muted">{ids.length} {ids.length === 1 ? "person" : "people"}</div>
+                        <ul className="space-y-1">
+                          {rows.map(({ pid, roles }) => (
+                            <li key={pid} className={`rounded px-1 py-0.5 text-[12px] leading-tight ${roles.length > 1 ? "bg-violet-50" : ""}`}>
+                              <span className="font-medium">{name(pid)}</span>
+                              <span className="block text-[11px] text-muted">{roles.map(posName).join(" · ")}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </td>
+                    );
+                  })}
+                </tr>
               </tbody>
             </table>
           </div>
@@ -488,7 +537,7 @@ export default function SchedulePage() {
           {/* Fairness */}
           <section className="card">
             <h2 className="h2 mb-1">How many services each person has</h2>
-            <p className="mb-3 text-xs text-muted">Next {weeks} weeks on this team, including suggestions. Aim for even numbers among people who play the same position.</p>
+            <p className="mb-3 text-xs text-muted">Services in the next {weeks} weeks on this team, including suggestions (several roles on one Sunday count once).</p>
             <div className="flex flex-wrap gap-2">
               {tally.map(({ pid, n }) => (
                 <span key={pid} className="flex items-center gap-2 rounded-full border border-line bg-white py-1 pl-1 pr-3 text-sm">
