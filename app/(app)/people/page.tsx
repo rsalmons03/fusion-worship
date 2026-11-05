@@ -3,7 +3,8 @@ import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useLocations, useProfile } from "@/components/ProfileContext";
 import Verified from "@/components/Verified";
-import type { Profile, Role } from "@/lib/types";
+import PersonEditor from "@/components/PersonEditor";
+import type { Position, PositionMember, Profile, Role, Team } from "@/lib/types";
 
 const ROLES: { value: Role; label: string; hint: string }[] = [
   { value: "admin", label: "Admin", hint: "Everything, including people" },
@@ -20,10 +21,23 @@ export default function PeoplePage() {
   const [form, setForm] = useState({ email: "", name: "", password: "", role: "member" as Role, location_id: "" });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [members, setMembers] = useState<PositionMember[]>([]);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [q, setQ] = useState("");
 
   const load = useCallback(async () => {
-    const { data } = await supabase.from("profiles").select("*").order("full_name");
-    setPeople((data ?? []) as Profile[]);
+    const [ppl, t, pos, pm] = await Promise.all([
+      supabase.from("profiles").select("*").order("full_name"),
+      supabase.from("teams").select("*").order("sort"),
+      supabase.from("positions").select("*").order("sort"),
+      supabase.from("position_members").select("*"),
+    ]);
+    setPeople((ppl.data ?? []) as Profile[]);
+    setTeams((t.data ?? []) as Team[]);
+    setPositions(pos.data ?? []);
+    setMembers(pm.data ?? []);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     load();
@@ -128,55 +142,64 @@ export default function PeoplePage() {
         {msg && <p className="text-sm text-muted sm:col-span-2 lg:col-span-6">{msg}</p>}
       </form>
 
-      <div className="card overflow-x-auto p-0">
-        <table className="w-full text-sm">
-          <thead className="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
-            <tr><th className="px-4 py-2">Name</th><th className="px-4 py-2">Email</th><th className="hidden px-4 py-2 sm:table-cell">Phone</th><th className="px-4 py-2">Role</th>{loc.locations.length > 0 && <th className="px-4 py-2">Location</th>}<th className="px-4 py-2" /></tr>
-          </thead>
-          <tbody className="divide-y divide-line">
-            {people.map((p) => (
-              <tr key={p.id}>
-                <td className="px-4 py-2 font-medium">
-                  <span className="flex items-center gap-1">
-                    {p.full_name || "—"} <Verified on={p.verified} />
-                  </span>
-                  <label className="mt-1 flex items-center gap-1 text-[11px] font-normal text-muted">
-                    Member since
-                    <input
-                      type="date"
-                      className="rounded-sm border border-line bg-white px-1 py-0.5 text-[11px]"
-                      defaultValue={(p.member_since || p.created_at || "").slice(0, 10)}
-                      onBlur={(e) => e.target.value && e.target.value !== (p.member_since ?? "") && setMemberSince(p, e.target.value)}
-                    />
-                  </label>
-                  <button
-                    className={`mt-1 rounded-sm px-1.5 py-0.5 text-[10px] font-bold uppercase ${p.verified ? "bg-[#1d9bf0] text-white" : "border border-line text-muted"}`}
-                    onClick={() => toggleVerified(p)}
-                  >
-                    {p.verified ? "✓ Confirmed member" : "Mark confirmed"}
-                  </button>
-                </td>
-                <td className="px-4 py-2 text-muted">{p.email}</td>
-                <td className="hidden px-4 py-2 text-muted sm:table-cell">{p.phone}</td>
-                <td className="px-4 py-2">
-                  <select className="input w-auto py-1" value={p.role} onChange={(e) => setRole(p, e.target.value as Role)} title={ROLES.find((r) => r.value === p.role)?.hint}>
-                    {ROLES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-                  </select>
-                </td>
-                {loc.locations.length > 0 && (
-                  <td className="px-4 py-2">
-                    <select className="input w-auto py-1" value={p.location_id ?? ""} onChange={(e) => setLocation(p, e.target.value || null)}>
-                      <option value="">All locations</option>
-                      {loc.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-                    </select>
-                  </td>
-                )}
-                <td className="px-4 py-2 text-right"><button className="btn-ghost whitespace-nowrap" onClick={() => setPassword(p)}>Set password</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="flex items-center gap-2">
+        <h2 className="h2 flex-1">Everyone ({people.filter((p) => p.role !== "pending").length})</h2>
+        <input className="input w-48" placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
+      <ul className="space-y-3">
+        {people
+          .filter((p) => !q.trim() || `${p.full_name} ${p.email} ${p.phone ?? ""}`.toLowerCase().includes(q.trim().toLowerCase()))
+          .map((p) => {
+            const mine = members.filter((m) => m.profile_id === p.id).map((m) => positions.find((x) => x.id === m.position_id)).filter(Boolean) as Position[];
+            const isOpen = editing === p.id;
+            return (
+              <li key={p.id} className="card">
+                <div className="flex flex-wrap items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1 font-semibold">
+                      {p.full_name || "(no name)"} <Verified on={p.verified} />
+                      {p.role === "pending" && <span className="ml-1 rounded-sm bg-amber-100 px-1.5 text-[10px] font-bold uppercase text-amber-800">Pending</span>}
+                    </div>
+                    <div className="truncate text-sm text-muted">
+                      {p.email}
+                      {p.phone && ` · ${p.phone}`}
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {mine.length ? (
+                        mine.map((x) => (
+                          <span key={x.id} className="rounded-full bg-accent-soft px-2 py-0.5 text-xs font-semibold text-accent">
+                            {x.name}
+                            <span className="font-normal text-muted"> · {teams.find((t) => t.id === x.team_id)?.name}</span>
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-xs text-muted">No positions yet</span>
+                      )}
+                    </div>
+                  </div>
+                  <button className={isOpen ? "btn" : "btn-secondary"} onClick={() => setEditing(isOpen ? null : p.id)}>
+                    {isOpen ? "Done" : "Edit"}
+                  </button>
+                </div>
+                {isOpen && (
+                  <PersonEditor
+                    p={p}
+                    teams={teams}
+                    positions={positions}
+                    members={members}
+                    locations={loc.locations}
+                    onChanged={load}
+                    setRole={(role) => setRole(p, role)}
+                    setLocation={(l) => setLocation(p, l)}
+                    setMemberSince={(d) => setMemberSince(p, d)}
+                    toggleVerified={() => toggleVerified(p)}
+                    setPassword={() => setPassword(p)}
+                  />
+                )}
+              </li>
+            );
+          })}
+      </ul>
     </div>
   );
 }

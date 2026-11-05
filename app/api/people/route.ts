@@ -41,14 +41,28 @@ export async function POST(req: Request) {
   return NextResponse.json({ ok: true });
 }
 
-// Admin sets (resets) someone's password.
+// Admin changes someone's sign-in email, or sets (resets) their password.
 export async function PATCH(req: Request) {
   const me = await callerProfile();
   if (me?.role !== "admin") return NextResponse.json({ error: "Admins only" }, { status: 403 });
-  const { id, password } = await req.json().catch(() => ({}));
+  const { id, password, email } = await req.json().catch(() => ({}));
   if (!UUID_RE.test(String(id ?? ""))) return NextResponse.json({ error: "Bad person" }, { status: 400 });
+  const admin = createAdminClient();
+
+  // Change sign-in email (also kept on the profile).
+  if (email !== undefined) {
+    const clean = String(email).trim().toLowerCase();
+    if (!/^\S+@\S+\.\S+$/.test(clean)) return NextResponse.json({ error: "Valid email required" }, { status: 400 });
+    const { error } = await admin.auth.admin.updateUserById(String(id), { email: clean, email_confirm: true });
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    const { error: pe } = await admin.from("profiles").update({ email: clean }).eq("id", String(id));
+    if (pe) return NextResponse.json({ error: pe.message }, { status: 500 });
+    return NextResponse.json({ ok: true });
+  }
+
+  // Set / reset password.
   if (String(password ?? "").length < 8) return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
-  const { error } = await createAdminClient().auth.admin.updateUserById(String(id), { password: String(password) });
+  const { error } = await admin.auth.admin.updateUserById(String(id), { password: String(password) });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
 }
