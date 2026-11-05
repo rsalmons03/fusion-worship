@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useRouter, useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { useProfile } from "@/components/ProfileContext";
+import { useLocations, useProfile } from "@/components/ProfileContext";
 import StatusChip from "@/components/StatusChip";
 import { KEYS } from "@/lib/chordpro";
 import { addMinutes, fmtDate, fmtTime, planLabel } from "@/lib/format";
@@ -27,7 +27,8 @@ export default function PlanPage() {
   const params = useParams<{ id: string }>();
   const planId = params.id;
   const me = useProfile();
-  const canEdit = me.isLeader;
+  const loc = useLocations();
+  const canEditAny = me.isLeader;
   const router = useRouter();
   const supabase = createClient();
 
@@ -65,7 +66,7 @@ export default function PlanPage() {
         supabase.from("teams").select("*").order("sort"),
         supabase.from("positions").select("*").order("sort"),
         supabase.from("position_members").select("*"),
-        supabase.from("profiles").select("id,email,full_name,phone,role").neq("role", "pending").order("full_name"),
+        supabase.from("profiles").select("id,email,full_name,phone,role,location_id").neq("role", "pending").order("full_name"),
         supabase.from("blockouts").select("*").lte("starts_on", p.service_date).gte("ends_on", p.service_date),
       ]);
       setSongs((s.data ?? []) as SongLite[]);
@@ -177,6 +178,9 @@ export default function PlanPage() {
 
   if (notFound) return <p>Plan not found. <Link className="text-accent" href="/plans">Back to plans</Link></p>;
   if (!plan) return <p className="text-muted">Loading…</p>;
+  const canEdit = canEditAny && (loc.canSwitch || plan.location_id === loc.current);
+
+  const planTeams = teams.filter((t) => !t.location_id || !plan.location_id || t.location_id === plan.location_id);
 
   return (
     <div className="space-y-6">
@@ -186,6 +190,7 @@ export default function PlanPage() {
           <Link href="/plans" className="text-sm text-muted hover:text-ink print:hidden">← Plans</Link>
           <h1 className="h1">{planLabel(plan)}</h1>
           <p className="text-muted">
+            {plan.location_id && <span className="font-semibold text-accent">{loc.name(plan.location_id)} · </span>}
             {fmtDate(plan.service_date, { weekday: "long", month: "long" })} {fmtTime(plan.start_time)}
             {totalMin > 0 && ` · ${totalMin} min`}
           </p>
@@ -198,7 +203,15 @@ export default function PlanPage() {
       </div>
 
       {canEdit && (
-        <section className="card grid gap-3 sm:grid-cols-2 lg:grid-cols-5 print:hidden">
+        <section className="card grid gap-3 sm:grid-cols-2 lg:grid-cols-6 print:hidden">
+          {loc.locations.length > 0 && (
+            <Field label="Location">
+              <select className="input" value={plan.location_id ?? ""} disabled={!loc.canSwitch} onChange={(e) => savePlan({ location_id: e.target.value || null })}>
+                <option value="">—</option>
+                {loc.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            </Field>
+          )}
           <Field label="Title">
             <input className="input" defaultValue={plan.title ?? ""} placeholder="e.g. Easter Sunday" onBlur={(e) => savePlan({ title: e.target.value || null })} />
           </Field>
@@ -217,7 +230,7 @@ export default function PlanPage() {
               {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           </Field>
-          <div className="sm:col-span-2 lg:col-span-5">
+          <div className="sm:col-span-2 lg:col-span-6">
             <Field label="Notes for the team">
               <textarea className="input" rows={2} defaultValue={plan.notes ?? ""} onBlur={(e) => savePlan({ notes: e.target.value || null })} />
             </Field>
@@ -261,10 +274,13 @@ export default function PlanPage() {
               </button>
             )}
           </div>
-          {teams.length === 0 && <p className="text-sm text-muted">No teams yet. <Link href="/teams" className="text-accent">Set up teams</Link></p>}
-          {teams.map((team) => (
+          {planTeams.length === 0 && <p className="text-sm text-muted">No teams yet. <Link href="/teams" className="text-accent">Set up teams</Link></p>}
+          {planTeams.map((team) => (
             <div key={team.id} className="card">
-              <h3 className="mb-2 font-semibold">{team.name}</h3>
+              <h3 className="mb-2 font-semibold">
+                {team.name}
+                {!team.location_id && <span className="ml-2 text-xs font-normal text-muted">Shared</span>}
+              </h3>
               <ul className="space-y-2">
                 {positions.filter((p) => p.team_id === team.id).map((pos) => {
                   const here = assignments.filter((a) => a.position_id === pos.id);

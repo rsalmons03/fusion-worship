@@ -10,7 +10,7 @@ export async function POST(req: Request) {
   const me = await callerProfile();
   if (me?.role !== "admin") return NextResponse.json({ error: "Admins only" }, { status: 403 });
 
-  const { email, name, role } = await req.json().catch(() => ({}));
+  const { email, name, role, location_id } = await req.json().catch(() => ({}));
   const cleanEmail = String(email ?? "").trim().toLowerCase();
   if (!/^\S+@\S+\.\S+$/.test(cleanEmail)) return NextResponse.json({ error: "Valid email required" }, { status: 400 });
   if (!["admin", "leader", "member"].includes(role)) return NextResponse.json({ error: "Bad role" }, { status: 400 });
@@ -27,7 +27,11 @@ export async function POST(req: Request) {
     if (error || !data.user) return NextResponse.json({ error: error?.message ?? "Could not create user" }, { status: 500 });
     id = data.user.id;
   }
-  const patch: Record<string, string> = { role };
+  const patch: Record<string, string | null> = { role };
+  if (location_id !== undefined) {
+    if (location_id && !/^[0-9a-f-]{36}$/i.test(String(location_id))) return NextResponse.json({ error: "Bad location" }, { status: 400 });
+    patch.location_id = location_id || null;
+  }
   if (String(name ?? "").trim()) patch.full_name = String(name).trim();
   const { error: upErr } = await admin.from("profiles").update(patch).eq("id", id);
   if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 });

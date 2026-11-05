@@ -6,7 +6,10 @@ export type Profile = {
   full_name: string;
   phone: string | null;
   role: Role;
+  location_id: string | null;
 };
+
+export type Location = { id: string; name: string; sort: number };
 
 export type Song = {
   id: string;
@@ -33,6 +36,7 @@ export type Plan = {
   title: string | null;
   series: string | null;
   notes: string | null;
+  location_id: string | null;
 };
 
 export type ItemKind = "song" | "header" | "item";
@@ -49,7 +53,7 @@ export type PlanItem = {
   description: string | null;
 };
 
-export type Team = { id: string; name: string; sort: number };
+export type Team = { id: string; name: string; sort: number; location_id: string | null };
 export type Position = { id: string; team_id: string; name: string; sort: number };
 export type PositionMember = { position_id: string; profile_id: string };
 

@@ -4,12 +4,13 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { CHURCH_NAME } from "@/lib/format";
-import { useProfile } from "./ProfileContext";
+import { useLocations, useProfile } from "./ProfileContext";
 
 export default function Nav() {
   const path = usePathname();
   const router = useRouter();
   const me = useProfile();
+  const loc = useLocations();
   const [open, setOpen] = useState(false);
   const links = [
     { href: "/", label: "Home" },
@@ -35,7 +36,26 @@ export default function Nav() {
           <img src="/logo.png" alt={CHURCH_NAME} className="h-8 w-auto" />
           <span className="hidden border-l border-line pl-2 font-display text-xs font-bold uppercase tracking-widest text-muted sm:inline">Worship</span>
         </Link>
-        <nav className="ml-4 hidden gap-1 md:flex">
+        {loc.locations.length > 0 &&
+          (loc.canSwitch ? (
+            <select
+              aria-label="Location"
+              className="rounded-sm border border-line bg-white px-2 py-1 font-display text-xs font-bold uppercase tracking-wide text-ink"
+              value={loc.current ?? ""}
+              onChange={(e) => {
+                loc.setCurrent(e.target.value || null);
+                router.refresh();
+              }}
+            >
+              <option value="">All locations</option>
+              {loc.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          ) : (
+            <span className="rounded-sm bg-accent-soft px-2 py-1 font-display text-xs font-bold uppercase tracking-wide text-accent">
+              {loc.name(loc.current)}
+            </span>
+          ))}
+        <nav className="ml-2 hidden gap-1 md:flex">
           {links.map((l) => (
             <Link
               key={l.href}

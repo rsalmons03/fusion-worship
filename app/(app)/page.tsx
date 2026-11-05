@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { useProfile } from "@/components/ProfileContext";
+import { useLocations, useProfile } from "@/components/ProfileContext";
 import StatusChip from "@/components/StatusChip";
 import { fmtDate, fmtTime, planLabel, todayISO } from "@/lib/format";
 import type { Assignment, Plan } from "@/lib/types";
@@ -11,6 +11,7 @@ type MyAssignment = Assignment & { plans: Plan; positions: { name: string; teams
 
 export default function Home() {
   const me = useProfile();
+  const loc = useLocations();
   const supabase = createClient();
   const [mine, setMine] = useState<MyAssignment[]>([]);
   const [plans, setPlans] = useState<(Plan & { plan_items: { count: number }[] })[]>([]);
@@ -25,13 +26,16 @@ export default function Home() {
         .eq("profile_id", me.id)
         .neq("status", "unsent")
         .gte("plans.service_date", today),
-      supabase.from("plans").select("*, plan_items(count)").gte("service_date", today).order("service_date").limit(8),
+      (loc.current
+        ? supabase.from("plans").select("*, plan_items(count)").eq("location_id", loc.current)
+        : supabase.from("plans").select("*, plan_items(count)")
+      ).gte("service_date", today).order("service_date").limit(8),
     ]);
     const rows = ((a.data ?? []) as MyAssignment[]).sort((x, y) => x.plans.service_date.localeCompare(y.plans.service_date));
     setMine(rows);
     setPlans((p.data ?? []) as never);
     setLoading(false);
-  }, [me.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [me.id, loc.current]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     load();
@@ -81,7 +85,7 @@ export default function Home() {
                     <Link href={`/plans/${a.plan_id}`} className="font-medium hover:text-accent">
                       {fmtDate(a.plans.service_date)}
                     </Link>
-                    <div className="text-sm text-muted">{a.positions.name}</div>
+                    <div className="text-sm text-muted">{a.positions.name}{a.plans.location_id && ` · ${loc.name(a.plans.location_id)}`}</div>
                   </div>
                   <StatusChip status={a.status} />
                   {a.status === "accepted" && (
@@ -111,7 +115,7 @@ export default function Home() {
                   <Link href={`/plans/${p.id}`} className="min-w-0 flex-1 hover:text-accent">
                     <div className="font-medium">{planLabel(p)}</div>
                     <div className="text-sm text-muted">
-                      {fmtDate(p.service_date)} {fmtTime(p.start_time)} {p.series && `· ${p.series}`}
+                      {fmtDate(p.service_date)} {fmtTime(p.start_time)} {!loc.current && p.location_id && `· ${loc.name(p.location_id)}`} {p.series && `· ${p.series}`}
                     </div>
                   </Link>
                   <span className="text-xs text-muted">{p.plan_items?.[0]?.count ?? 0} items</span>

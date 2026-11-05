@@ -8,6 +8,6 @@ export async function callerProfile(): Promise<Profile | null> {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return null;
-  const { data } = await supabase.from("profiles").select("id,email,full_name,phone,role").eq("id", user.id).maybeSingle();
+  const { data } = await supabase.from("profiles").select("id,email,full_name,phone,role,location_id").eq("id", user.id).maybeSingle();
   return (data as Profile) ?? null;
 }

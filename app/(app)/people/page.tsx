@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { useProfile } from "@/components/ProfileContext";
+import { useLocations, useProfile } from "@/components/ProfileContext";
 import type { Profile, Role } from "@/lib/types";
 
 const ROLES: { value: Role; label: string; hint: string }[] = [
@@ -13,14 +13,15 @@ const ROLES: { value: Role; label: string; hint: string }[] = [
 
 export default function PeoplePage() {
   const me = useProfile();
+  const loc = useLocations();
   const supabase = createClient();
   const [people, setPeople] = useState<Profile[]>([]);
-  const [form, setForm] = useState({ email: "", name: "", role: "member" as Role });
+  const [form, setForm] = useState({ email: "", name: "", role: "member" as Role, location_id: "" });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
   const load = useCallback(async () => {
-    const { data } = await supabase.from("profiles").select("id,email,full_name,phone,role").order("full_name");
+    const { data } = await supabase.from("profiles").select("id,email,full_name,phone,role,location_id").order("full_name");
     setPeople((data ?? []) as Profile[]);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -36,6 +37,12 @@ export default function PeoplePage() {
     load();
   }
 
+  async function setLocation(p: Profile, location_id: string | null) {
+    const { error } = await supabase.from("profiles").update({ location_id }).eq("id", p.id);
+    if (error) alert(error.message);
+    load();
+  }
+
   async function add(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -43,13 +50,13 @@ export default function PeoplePage() {
     const res = await fetch("/api/people", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
+      body: JSON.stringify(loc.locations.length ? form : { ...form, location_id: undefined }),
     });
     const body = await res.json().catch(() => ({}));
     setBusy(false);
     if (!res.ok) return setMsg(body.error ?? "Could not add person");
     setMsg(body.emailed ? `Added ${form.email} and emailed them a sign-in link.` : `Added ${form.email}. ${body.note ?? ""}`);
-    setForm({ email: "", name: "", role: "member" });
+    setForm({ email: "", name: "", role: "member", location_id: "" });
     load();
   }
 
@@ -74,7 +81,7 @@ export default function PeoplePage() {
         </section>
       )}
 
-      <form onSubmit={add} className="card grid gap-3 sm:grid-cols-[1fr_1fr_auto_auto] sm:items-end">
+      <form onSubmit={add} className="card grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto_auto_auto] lg:items-end">
         <label className="block"><span className="label">Email</span><input type="email" required className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
         <label className="block"><span className="label">Name</span><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
         <label className="block"><span className="label">Role</span>
@@ -82,14 +89,22 @@ export default function PeoplePage() {
             {ROLES.filter((r) => r.value !== "pending").map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
           </select>
         </label>
+        {loc.locations.length > 0 && (
+          <label className="block"><span className="label">Location</span>
+            <select className="input" value={form.location_id} onChange={(e) => setForm({ ...form, location_id: e.target.value })}>
+              <option value="">All locations</option>
+              {loc.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          </label>
+        )}
         <button className="btn" disabled={busy}>{busy ? "Adding…" : "Add person"}</button>
-        {msg && <p className="text-sm text-muted sm:col-span-4">{msg}</p>}
+        {msg && <p className="text-sm text-muted sm:col-span-2 lg:col-span-5">{msg}</p>}
       </form>
 
       <div className="card overflow-x-auto p-0">
         <table className="w-full text-sm">
           <thead className="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
-            <tr><th className="px-4 py-2">Name</th><th className="px-4 py-2">Email</th><th className="hidden px-4 py-2 sm:table-cell">Phone</th><th className="px-4 py-2">Role</th></tr>
+            <tr><th className="px-4 py-2">Name</th><th className="px-4 py-2">Email</th><th className="hidden px-4 py-2 sm:table-cell">Phone</th><th className="px-4 py-2">Role</th>{loc.locations.length > 0 && <th className="px-4 py-2">Location</th>}</tr>
           </thead>
           <tbody className="divide-y divide-line">
             {people.map((p) => (
@@ -102,6 +117,14 @@ export default function PeoplePage() {
                     {ROLES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                   </select>
                 </td>
+                {loc.locations.length > 0 && (
+                  <td className="px-4 py-2">
+                    <select className="input w-auto py-1" value={p.location_id ?? ""} onChange={(e) => setLocation(p, e.target.value || null)}>
+                      <option value="">All locations</option>
+                      {loc.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                    </select>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

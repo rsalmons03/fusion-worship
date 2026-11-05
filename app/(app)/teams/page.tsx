@@ -1,11 +1,12 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { useProfile } from "@/components/ProfileContext";
+import { useLocations, useProfile } from "@/components/ProfileContext";
 import type { Position, PositionMember, Profile, Team } from "@/lib/types";
 
 export default function TeamsPage() {
   const me = useProfile();
+  const loc = useLocations();
   const canEdit = me.isLeader;
   const supabase = createClient();
   const [teams, setTeams] = useState<Team[]>([]);
@@ -14,13 +15,15 @@ export default function TeamsPage() {
   const [people, setPeople] = useState<Profile[]>([]);
   const [openPos, setOpenPos] = useState<string | null>(null);
   const [newTeam, setNewTeam] = useState("");
+  const [newTeamLoc, setNewTeamLoc] = useState<string>("");
+  useEffect(() => setNewTeamLoc(loc.current ?? ""), [loc.current]);
 
   const load = useCallback(async () => {
     const [t, p, r, ppl] = await Promise.all([
       supabase.from("teams").select("*").order("sort"),
       supabase.from("positions").select("*").order("sort"),
       supabase.from("position_members").select("*"),
-      supabase.from("profiles").select("id,email,full_name,phone,role").neq("role", "pending").order("full_name"),
+      supabase.from("profiles").select("id,email,full_name,phone,role,location_id").neq("role", "pending").order("full_name"),
     ]);
     setTeams(t.data ?? []);
     setPositions(p.data ?? []);
@@ -40,7 +43,8 @@ export default function TeamsPage() {
   async function addTeam(e: React.FormEvent) {
     e.preventDefault();
     if (!newTeam.trim()) return;
-    await supabase.from("teams").insert({ name: newTeam.trim(), sort: teams.length + 1 });
+    const { error } = await supabase.from("teams").insert({ name: newTeam.trim(), sort: teams.length + 1, ...(loc.locations.length ? { location_id: newTeamLoc || null } : {}) });
+    if (error) return alert(error.message);
     setNewTeam("");
     load();
   }
@@ -51,6 +55,12 @@ export default function TeamsPage() {
       await supabase.from("teams").update({ name: n.trim() }).eq("id", t.id);
       load();
     }
+  }
+
+  async function moveTeam(t: Team, location_id: string | null) {
+    const { error } = await supabase.from("teams").update({ location_id }).eq("id", t.id);
+    if (error) alert(error.message);
+    load();
   }
 
   async function deleteTeam(t: Team) {
@@ -83,24 +93,47 @@ export default function TeamsPage() {
     }
   }
 
+  const canEditTeam = (t: Team) => canEdit && (loc.canSwitch || t.location_id === loc.current);
+  const shown = teams.filter((t) => !loc.current || !t.location_id || t.location_id === loc.current);
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="h1">Teams</h1>
-        <p className="text-sm text-muted">Each position has a roster of people who can fill it. Rosters show first when you schedule a plan.</p>
+        <p className="text-sm text-muted">
+          Each position has a roster of people who can fill it. Rosters show first when you schedule a plan.
+          {loc.locations.length > 0 && " Shared teams serve every location."}
+        </p>
       </div>
       {canEdit && (
-        <form onSubmit={addTeam} className="flex max-w-md gap-2">
+        <form onSubmit={addTeam} className="flex max-w-xl flex-wrap gap-2 sm:flex-nowrap">
           <input className="input" placeholder="New team name (e.g. Kids, Hospitality)" value={newTeam} onChange={(e) => setNewTeam(e.target.value)} />
+          {loc.locations.length > 0 && (
+            <select className="input sm:w-44" value={newTeamLoc} onChange={(e) => setNewTeamLoc(e.target.value)} aria-label="Team location">
+              {loc.canSwitch && <option value="">Shared (all locations)</option>}
+              {loc.locations.filter((l) => loc.canSwitch || l.id === loc.current).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          )}
           <button className="btn shrink-0">Add team</button>
         </form>
       )}
       <div className="grid gap-4 md:grid-cols-2">
-        {teams.map((t) => (
+        {shown.map((t) => (
           <section key={t.id} className="card">
-            <div className="mb-3 flex items-center gap-2">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
               <h2 className="h2 flex-1">{t.name}</h2>
-              {canEdit && (
+              {loc.locations.length > 0 &&
+                (canEdit && loc.canSwitch ? (
+                  <select className="rounded-sm border border-line bg-white px-1.5 py-0.5 text-xs" value={t.location_id ?? ""} onChange={(e) => moveTeam(t, e.target.value || null)} aria-label="Team location">
+                    <option value="">Shared</option>
+                    {loc.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                  </select>
+                ) : (
+                  <span className="rounded-sm bg-accent-soft px-1.5 py-0.5 font-display text-[10px] font-bold uppercase tracking-wide text-accent">
+                    {t.location_id ? loc.name(t.location_id) : "Shared"}
+                  </span>
+                ))}
+              {canEditTeam(t) && (
                 <>
                   <button className="btn-ghost" onClick={() => addPosition(t.id)}>+ Position</button>
                   <button className="btn-ghost" onClick={() => renameTeam(t)}>Rename</button>
