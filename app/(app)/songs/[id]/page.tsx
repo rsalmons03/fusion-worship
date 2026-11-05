@@ -178,6 +178,8 @@ export default function SongPage() {
               <span className="label">Chart: lyrics &amp; chords</span>
               <ChartEditor value={song.chordpro} onChange={(v) => set("chordpro", v)} songKey={song.default_key} placeholder={SAMPLE} onTitle={(t) => !song.title.trim() && set("title", t)} />
             </div>
+            {!isNew && <SongFiles songId={params.id} canEdit={canEdit} onChange={() => setFilesVersion((v) => v + 1)} />}
+            {isNew && <p className="text-sm text-muted">Save the song first, then you can upload audio, PDFs and other files.</p>}
             <F label="Arrangement notes"><textarea className="input" rows={2} value={song.notes ?? ""} onChange={(e) => set("notes", e.target.value)} /></F>
             <div className="flex gap-2">
               <button className="btn" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save song"}</button>

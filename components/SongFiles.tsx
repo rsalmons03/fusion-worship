@@ -71,7 +71,13 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
     load();
   }
 
-  if (unavailable) return null;
+  if (unavailable)
+    return (
+      <div className="card border-amber-300 bg-amber-50 text-sm">
+        <div className="label">Files</div>
+        <p>File uploads aren&apos;t switched on yet. Run the database update <b>003_charts_trainings.sql</b> in Supabase, then reload.</p>
+      </div>
+    );
   return (
     <div className="card text-sm">
       <div className="label">Files</div>
