@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { sectionsOf, type SectionInfo } from "@/lib/chordpro";
+import { parseChordPro, sectionsOf, type SectionInfo } from "@/lib/chordpro";
 import { isAudio } from "@/lib/media";
 
 type Track = { id: string; name: string; url: string; markers: Record<string, number>; isStem: boolean };
@@ -105,6 +105,7 @@ export default function RehearsalPlayer({
   const [marking, setMarking] = useState(false);
   const [open, setOpen] = useState(true);
   const [showMixer, setShowMixer] = useState(false);
+  const [showTimes, setShowTimes] = useState(false);
   const [cues, setCues] = useState(false);
   // Count-in before the song starts: "3, 2, 1" (default), "1, 2, 3, 4", or off. Remembered on this device.
   const [countIn, setCountIn] = useState<"321" | "1234" | "off">("321");
@@ -498,6 +499,39 @@ export default function RehearsalPlayer({
     }
   }
 
+  // ── Section times without tapping along: estimate, type, or set to "now" ──
+  async function saveMarkers(markers: Record<string, number>) {
+    if (!track) return;
+    setMarkers(track.id, markers);
+    const { error } = await createClient().from("song_files").update({ markers }).eq("id", track.id);
+    if (error) alert(/markers/.test(error.message) ? "Section times need the database update (run ALL_UPDATES.sql in Supabase). " + error.message : error.message);
+  }
+
+  /** Spread the sections across the song by how many lyric lines each has (a repeat uses its first time's length). */
+  function estimateMarkers() {
+    if (!duration || !sections.length) return;
+    const lines: number[] = [];
+    let cur = -1;
+    for (const l of parseChordPro(chart)) {
+      if (l.type === "section") lines[++cur] = 0;
+      else if (l.type === "lyrics" && cur >= 0) lines[cur]++;
+    }
+    const firstLen = new Map<string, number>();
+    const w = sections.map((sec, i) => {
+      const key = sec.label.toLowerCase();
+      if (lines[i] > 0 && !firstLen.has(key)) firstLen.set(key, lines[i]);
+      return Math.max(1, lines[i] || firstLen.get(key) || 2);
+    });
+    const total = w.reduce((a, b) => a + b, 0);
+    let t = 0;
+    const markers: Record<string, number> = {};
+    sections.forEach((sec, i) => {
+      markers[sec.n] = Math.round(t * 10) / 10;
+      t += (w[i] / total) * duration;
+    });
+    saveMarkers(markers);
+  }
+
   async function clearMarkers() {
     if (!track || !confirm("Clear all section markers for this track?")) return;
     setMarkers(track.id, {});
@@ -524,11 +558,11 @@ export default function RehearsalPlayer({
   useEffect(() => {
     if (!hasBar) return;
     const prev = document.body.style.paddingBottom;
-    document.body.style.paddingBottom = `${(open ? 230 : 130) + (showMixer && useStems ? 220 : 0) + bottomOffset}px`;
+    document.body.style.paddingBottom = `${(open ? 230 : 130) + (showMixer && useStems ? 220 : 0) + (showTimes ? 230 : 0) + bottomOffset}px`;
     return () => {
       document.body.style.paddingBottom = prev;
     };
-  }, [hasBar, open, bottomOffset, showMixer, useStems]);
+  }, [hasBar, open, bottomOffset, showMixer, useStems, showTimes]);
 
   const styles = dark ? KIND_STYLE_DARK : KIND_STYLE;
   const bar = dark ? "bg-stone-900 border-stone-700 text-white" : "bg-white border-line text-ink";
@@ -603,6 +637,54 @@ export default function RehearsalPlayer({
             {!track && <p className="mb-2 text-xs opacity-70">No audio uploaded for this song.</p>}
 
             {/* Mixer */}
+            {showTimes && track && (
+              <div className="mb-3 max-h-56 overflow-y-auto rounded-md bg-black/5 p-2 text-xs">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <span className="flex-1 font-bold uppercase tracking-wide">Section start times</span>
+                  <button className="rounded-sm bg-accent px-2 py-1 font-bold text-white" onClick={estimateMarkers} disabled={!duration} title="Spread sections across the song by lyric length">
+                    ⚡ Estimate
+                  </button>
+                  <button className="opacity-70" onClick={() => setShowTimes(false)}>Done</button>
+                </div>
+                <ul className="space-y-1">
+                  {sections.map((sec) => {
+                    const t = track.markers?.[sec.n];
+                    return (
+                      <li key={sec.n} className="flex items-center gap-2">
+                        <span className="w-24 truncate font-semibold" title={sec.label}>{sec.abbr} · {sec.label}</span>
+                        <input
+                          key={`${sec.n}-${t ?? "x"}`}
+                          className="w-16 rounded border border-current/20 bg-transparent px-1 py-0.5 text-right tabular-nums"
+                          placeholder="m:ss"
+                          defaultValue={t === undefined ? "" : fmt(t)}
+                          onBlur={(e) => {
+                            const v = e.target.value.trim();
+                            const next = { ...(track.markers ?? {}) };
+                            if (!v) delete next[sec.n];
+                            else {
+                              const m = v.match(/^(\d{1,2}):(\d{1,2})$/) ?? v.match(/^(\d+)$/);
+                              if (!m) return alert("Use minutes:seconds, like 1:05");
+                              next[sec.n] = m[2] !== undefined ? Number(m[1]) * 60 + Number(m[2]) : Number(m[1]);
+                            }
+                            saveMarkers(next);
+                          }}
+                        />
+                        <button className="rounded border border-current/20 px-1.5 py-0.5" onClick={() => saveMarkers({ ...(track.markers ?? {}), [sec.n]: Math.round((audioRef.current?.currentTime ?? 0) * 10) / 10 })} title="Set to where the song is now">
+                          ⏱ Now
+                        </button>
+                        {t !== undefined && (
+                          <>
+                            <button className="px-1 opacity-70" onClick={() => saveMarkers({ ...track.markers, [sec.n]: Math.max(0, t - 1) })}>−1s</button>
+                            <button className="px-1 opacity-70" onClick={() => saveMarkers({ ...track.markers, [sec.n]: t + 1 })}>+1s</button>
+                            <button className="px-1 opacity-70" onClick={() => { const a = audioRef.current; if (a) { a.currentTime = t; if (a.paused) a.play().catch(() => {}); } }} title="Play from here">▶</button>
+                          </>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
             {useStems && showMixer && (
               <div className="mb-3 flex gap-1 overflow-x-auto rounded-md bg-black/5 p-2 dark:bg-white/5">
                 {stems.map((s) => {
@@ -731,10 +813,29 @@ export default function RehearsalPlayer({
                   </select>
                 )}
                 {tracks.length === 1 && track && <span className="max-w-[8rem] truncate opacity-60">{track.name}</span>}
-                {canEdit && markersOk && track && sections.length > 0 && (
+                {canEdit && track && (
                   <>
-                    <button onClick={() => setMarking(!marking)} className={`ml-auto rounded-sm px-2 py-1 font-bold uppercase ${marking ? "bg-ok text-white" : "opacity-70 hover:opacity-100"}`}>
+                    <button
+                      onClick={() => {
+                        if (!sections.length) return alert("This song's chart has no section names yet (Verse 1, Chorus…). Edit the song and add them, or import its ProPresenter file.");
+                        if (!markersOk) return alert("Section times need the database update. Run ALL_UPDATES.sql in Supabase (SQL editor), then reload.");
+                        setShowTimes(false);
+                        setMarking(!marking);
+                      }}
+                      className={`ml-auto rounded-sm px-2 py-1 font-bold uppercase ${marking ? "bg-ok text-white" : "opacity-70 hover:opacity-100"}`}
+                    >
                       {marking ? "Done marking" : "Mark sections"}
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (!sections.length) return alert("This song's chart has no section names yet (Verse 1, Chorus…). Edit the song and add them, or import its ProPresenter file.");
+                        if (!markersOk) return alert("Section times need the database update. Run ALL_UPDATES.sql in Supabase (SQL editor), then reload.");
+                        setMarking(false);
+                        setShowTimes(!showTimes);
+                      }}
+                      className={chip(showTimes)}
+                    >
+                      ⏱ Section times
                     </button>
                     {marks.length > 0 && !marking && <button className="opacity-60 hover:opacity-100" onClick={clearMarkers}>Clear marks</button>}
                   </>
