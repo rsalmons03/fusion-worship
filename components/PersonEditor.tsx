@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Location, Position, PositionMember, Profile, Role, Team } from "@/lib/types";
 
@@ -41,26 +41,43 @@ export default function PersonEditor({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [newPos, setNewPos] = useState({ team: teams[0]?.id ?? "", name: "" });
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  useEffect(() => () => void saveRef.current(), []);
   const mine = new Set(members.filter((m) => m.profile_id === p.id).map((m) => m.position_id));
 
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
+  // Last values that are known to be saved, so we only send real changes.
+  const lastSaved = useRef({ full_name: p.full_name ?? "", email: (p.email ?? "").toLowerCase(), phone: p.phone ?? "" });
+
+  async function save(e?: React.FormEvent) {
+    e?.preventDefault();
+    const next = { full_name: form.full_name.trim(), email: form.email.trim().toLowerCase(), phone: form.phone.trim() };
+    const prev = lastSaved.current;
+    const patch: Record<string, string> = {};
+    if (next.full_name !== prev.full_name) patch.full_name = next.full_name;
+    if (next.phone !== prev.phone) patch.phone = next.phone;
+    if (next.email && next.email !== prev.email) patch.email = next.email;
+    if (!Object.keys(patch).length) return;
+    // Count it as saved straight away so a second trigger (leaving the box + closing) doesn't send it twice.
+    lastSaved.current = { ...prev, ...patch };
+    const fail = (msg: string) => {
+      lastSaved.current = prev;
+      setSaving(false);
+      alert(`Couldn't save ${p.full_name || "this person"}: ${msg}`);
+    };
     setSaving(true);
     setSaved(false);
-    const { error } = await supabase.from("profiles").update({ full_name: form.full_name.trim(), phone: form.phone.trim() || null }).eq("id", p.id);
-    if (error) {
-      setSaving(false);
-      return alert(error.message);
-    }
-    const email = form.email.trim().toLowerCase();
-    if (email && email !== (p.email ?? "").toLowerCase()) {
-      const res = await fetch("/api/people", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: p.id, email }) });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setSaving(false);
-        return alert(body.error ?? "Could not change email");
-      }
-    }
+    // Saved on the server (which checks you're an admin) and confirmed before showing "Saved".
+    const res = await fetch("/api/people", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: p.id, ...patch }) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok && !patch.email) {
+      // Server couldn't do it (e.g. its secret key isn't set up): save name/phone directly instead.
+      const direct: Record<string, string | null> = {};
+      if (patch.full_name !== undefined) direct.full_name = patch.full_name;
+      if (patch.phone !== undefined) direct.phone = patch.phone || null;
+      const { data, error } = await supabase.from("profiles").update(direct).eq("id", p.id).select("id");
+      if (error || !data?.length) return fail(error?.message ?? body.error ?? "no permission to change this person");
+    } else if (!res.ok) return fail(body.error ?? res.statusText);
     setSaving(false);
     setSaved(true);
     onChanged();
@@ -89,12 +106,13 @@ export default function PersonEditor({
     <div className="mt-4 space-y-5 border-t border-line pt-4">
       {/* Details */}
       <form onSubmit={save} className="grid gap-3 sm:grid-cols-3">
-        <label className="block"><span className="label">Name</span><input className="input" value={form.full_name} onChange={(e) => { setForm({ ...form, full_name: e.target.value }); setSaved(false); }} /></label>
-        <label className="block"><span className="label">Email (sign-in)</span><input type="email" className="input" value={form.email} onChange={(e) => { setForm({ ...form, email: e.target.value }); setSaved(false); }} /></label>
-        <label className="block"><span className="label">Phone</span><input type="tel" className="input" value={form.phone} onChange={(e) => { setForm({ ...form, phone: e.target.value }); setSaved(false); }} /></label>
+        <label className="block"><span className="label">Name</span><input className="input" value={form.full_name} onChange={(e) => { setForm({ ...form, full_name: e.target.value }); setSaved(false); }} onBlur={() => save()} /></label>
+        <label className="block"><span className="label">Email (sign-in)</span><input type="email" className="input" value={form.email} onChange={(e) => { setForm({ ...form, email: e.target.value }); setSaved(false); }} onBlur={() => save()} /></label>
+        <label className="block"><span className="label">Phone</span><input type="tel" className="input" value={form.phone} onChange={(e) => { setForm({ ...form, phone: e.target.value }); setSaved(false); }} onBlur={() => save()} /></label>
         <div className="flex items-center gap-3 sm:col-span-3">
           <button className="btn" disabled={saving}>{saving ? "Saving…" : "Save details"}</button>
           {saved && <span className="text-sm text-ok">Saved ✓</span>}
+          {!saved && !saving && <span className="text-xs text-muted">Changes also save when you leave a box.</span>}
         </div>
       </form>
 

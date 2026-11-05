@@ -45,9 +45,20 @@ export async function POST(req: Request) {
 export async function PATCH(req: Request) {
   const me = await callerProfile();
   if (me?.role !== "admin") return NextResponse.json({ error: "Admins only" }, { status: 403 });
-  const { id, password, email } = await req.json().catch(() => ({}));
+  const { id, password, email, full_name, phone } = await req.json().catch(() => ({}));
   if (!UUID_RE.test(String(id ?? ""))) return NextResponse.json({ error: "Bad person" }, { status: 400 });
   const admin = createAdminClient();
+
+  // Name / phone.
+  const details: Record<string, string | null> = {};
+  if (full_name !== undefined) details.full_name = String(full_name).trim().slice(0, 200);
+  if (phone !== undefined) details.phone = String(phone).trim().slice(0, 50) || null;
+  if (Object.keys(details).length) {
+    const { data, error } = await admin.from("profiles").update(details).eq("id", String(id)).select("id");
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (!data?.length) return NextResponse.json({ error: "Person not found" }, { status: 404 });
+    if (email === undefined && password === undefined) return NextResponse.json({ ok: true });
+  }
 
   // Change sign-in email (also kept on the profile).
   if (email !== undefined) {
