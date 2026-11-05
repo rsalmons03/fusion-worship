@@ -61,7 +61,16 @@ export type PlanItem = {
 };
 
 export type Team = { id: string; name: string; sort: number; location_id: string | null };
-export type Position = { id: string; team_id: string; name: string; sort: number };
+export type Position = {
+  id: string;
+  team_id: string;
+  name: string;
+  sort: number;
+  /** How many people this position needs (e.g. 3 backup vocals). */
+  needed?: number;
+  /** Can be done alongside another position in the same service (e.g. singing while playing). */
+  can_double?: boolean;
+};
 export type PositionMember = { position_id: string; profile_id: string };
 
 export type AssignmentStatus = "unsent" | "pending" | "accepted" | "declined";

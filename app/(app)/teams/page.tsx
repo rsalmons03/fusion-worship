@@ -77,6 +77,20 @@ export default function TeamsPage() {
     load();
   }
 
+  async function updatePosition(p: Position, patch: Partial<Position>) {
+    setPositions((xs) => xs.map((x) => (x.id === p.id ? { ...x, ...patch } : x)));
+    const { error } = await supabase.from("positions").update(patch).eq("id", p.id);
+    if (error) {
+      alert(/needed|can_double/.test(error.message) ? "This needs the database update 012_vocals.sql (or run ALL_UPDATES.sql). " + error.message : error.message);
+      load();
+    }
+  }
+
+  async function renamePosition(p: Position) {
+    const n = prompt("Position name", p.name);
+    if (n?.trim() && n.trim() !== p.name) updatePosition(p, { name: n.trim() });
+  }
+
   async function deletePosition(p: Position) {
     if (!confirm(`Delete position ${p.name}?`)) return;
     await supabase.from("positions").delete().eq("id", p.id);
@@ -148,11 +162,30 @@ export default function TeamsPage() {
                 return (
                   <li key={p.id} className="py-2 text-sm">
                     <div className="flex items-center gap-2">
-                      <span className="font-medium">{p.name}</span>
+                      <span className="font-medium">
+                        {p.name}
+                        {(p.needed ?? 1) > 1 && <span className="ml-1 text-xs font-normal text-muted">×{p.needed}</span>}
+                        {p.can_double && <span className="ml-1 rounded-sm bg-sky-50 px-1 text-[10px] font-semibold uppercase text-sky-700" title="Can be done alongside another position in the same service">+ doubles</span>}
+                      </span>
                       <span className="flex-1 truncate text-muted">{members.map(name).join(", ") || "No one yet"}</span>
                       {canEdit && <button className="btn-ghost" onClick={() => setOpenPos(isOpen ? null : p.id)}>{isOpen ? "Done" : "Edit"}</button>}
                       {canEdit && isOpen && <button className="btn-ghost text-bad" onClick={() => deletePosition(p)}>✕</button>}
                     </div>
+                    {isOpen && (
+                      <div className="mt-2 flex flex-wrap items-center gap-3 rounded-md bg-stone-50 px-3 py-2 text-xs">
+                        <button className="font-semibold text-accent" onClick={() => renamePosition(p)}>Rename</button>
+                        <label className="flex items-center gap-1">
+                          People needed
+                          <select className="rounded border border-line bg-white px-1 py-0.5" value={p.needed ?? 1} onChange={(e) => updatePosition(p, { needed: Number(e.target.value) })}>
+                            {[1, 2, 3, 4, 5, 6, 8, 10].map((n) => <option key={n}>{n}</option>)}
+                          </select>
+                        </label>
+                        <label className="flex items-center gap-1">
+                          <input type="checkbox" checked={!!p.can_double} onChange={(e) => updatePosition(p, { can_double: e.target.checked })} />
+                          Can double up (e.g. sing while playing guitar)
+                        </label>
+                      </div>
+                    )}
                     {isOpen && (
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {people.map((person) => {

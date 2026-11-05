@@ -603,7 +603,11 @@ export default function PlanPage() {
                               )}
                             </div>
                           ))}
-                          {!here.length && !adding && <p className="px-4 py-2 text-sm italic text-stone-400">Needs someone</p>}
+                          {here.length < (pos.needed ?? 1) && !adding && (
+                            <p className="px-4 py-2 text-sm italic text-stone-400">
+                              {here.length === 0 ? ((pos.needed ?? 1) > 1 ? `Needs ${pos.needed} people` : "Needs someone") : `Needs ${(pos.needed ?? 1) - here.length} more`}
+                            </p>
+                          )}
                           {adding && (
                             <div className="px-4 py-2 print:hidden">
                               <select

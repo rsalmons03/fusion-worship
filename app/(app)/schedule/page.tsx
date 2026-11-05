@@ -80,11 +80,13 @@ export default function SchedulePage() {
     const slots = plans.flatMap((pl) =>
       teamPositions
         .filter((pos) => !onlyPosition || pos.id === onlyPosition)
-        .filter((pos) => !at(pl.id, pos.id).length && !prop(pl.id, pos.id).length)
-        .map((pos) => ({ planId: pl.id, date: pl.service_date, positionId: pos.id }))
+        .flatMap((pos) => {
+          const open = (pos.needed ?? 1) - at(pl.id, pos.id).length - prop(pl.id, pos.id).length;
+          return Array.from({ length: Math.max(0, open) }, () => ({ planId: pl.id, date: pl.service_date, positionId: pos.id }));
+        })
     );
     const candidates = Object.fromEntries(teamPositions.map((p) => [p.id, rosterFor(p.id)]));
-    const filled = fairFill({ slots, candidates, existing: [...existingBookings(), ...proposed], blocked: isBlocked, verified: isVerified, avoidBackToBack: backToBack, maxInARow: maxRow });
+    const filled = fairFill({ slots, candidates, existing: [...existingBookings(), ...proposed], blocked: isBlocked, verified: isVerified, avoidBackToBack: backToBack, maxInARow: maxRow, canDouble: (id) => !!positions.find((p) => p.id === id)?.can_double });
     setProposed([...proposed, ...filled]);
     const missing = slots.length - filled.length;
     if (!filled.length) alert(slots.length ? "No one on the roster for these positions is available. Add players to positions on People or Teams." : "Everything is already filled.");
@@ -97,7 +99,8 @@ export default function SchedulePage() {
     let rested = 0;
     for (const pl of plans) {
       if (at(pl.id, positionId).some((a) => a.profile_id === profileId) || prop(pl.id, positionId).some((a) => a.profileId === profileId)) continue;
-      if (at(pl.id, positionId).length || prop(pl.id, positionId).length) continue; // already filled
+      const need = positions.find((p) => p.id === positionId)?.needed ?? 1;
+      if (at(pl.id, positionId).length + prop(pl.id, positionId).length >= need) continue; // already full
       if (isBlocked(profileId, pl.service_date)) {
         skipped++;
         continue;
@@ -252,7 +255,11 @@ export default function SchedulePage() {
                     <tr key={pos.id} className="border-b border-line align-top last:border-0">
                       <th className="sticky left-0 z-10 bg-stone-50 px-3 py-2 text-left font-normal">
                         <div className="text-xs font-bold uppercase tracking-wide">{pos.name}</div>
-                        <div className="text-[11px] text-muted">{players.length} {players.length === 1 ? "player" : "players"}</div>
+                        <div className="text-[11px] text-muted">
+                          {players.length} {players.length === 1 ? "person" : "people"}
+                          {(pos.needed ?? 1) > 1 && ` · needs ${pos.needed}`}
+                          {pos.can_double && " · can double up"}
+                        </div>
                         <div className="mt-1 flex flex-col items-start gap-0.5">
                           <button className="text-[11px] font-semibold text-accent hover:underline" onClick={() => autoFill(pos.id)}>⚖ Fill fairly</button>
                           <select
@@ -293,7 +300,11 @@ export default function SchedulePage() {
                                   className={`w-full rounded px-1 py-0.5 text-left text-[12px] ${here.length || sug.length ? "text-muted opacity-60 hover:opacity-100" : "italic text-stone-400 hover:bg-stone-50"}`}
                                   onClick={() => setCell({ planId: pl.id, positionId: pos.id })}
                                 >
-                                  {here.length || sug.length ? "+ add" : "Needs someone"}
+                                  {(() => {
+                                    const left = (pos.needed ?? 1) - here.length - sug.length;
+                                    if (!here.length && !sug.length) return (pos.needed ?? 1) > 1 ? `Needs ${pos.needed}` : "Needs someone";
+                                    return left > 0 ? `+ ${left} more needed` : "+ add";
+                                  })()}
                                 </button>
                               ) : (
                                 <select
