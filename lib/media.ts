@@ -24,6 +24,12 @@ export function embedFor(raw: string | null | undefined): Embed | null {
     return { src: `https://www.youtube-nocookie.com/embed/${yt}${start ? `?start=${start}` : ""}`, height: 200, label: "YouTube" };
   }
 
+  // Vimeo
+  if (host === "vimeo.com" || host === "player.vimeo.com") {
+    const id = u.pathname.match(/(?:\/video)?\/(\d+)/)?.[1];
+    if (id) return { src: `https://player.vimeo.com/video/${id}`, height: 220, label: "Vimeo" };
+  }
+
   // Spotify
   if (host === "open.spotify.com") {
     const m = u.pathname.match(/\/(track|album|playlist|episode)\/([A-Za-z0-9]+)/);
