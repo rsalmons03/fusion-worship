@@ -23,6 +23,7 @@ export type Song = {
   chordpro: string;
   reference_url: string | null;
   multitracks_url?: string | null;
+  tutorials?: Tutorial[];
   notes: string | null;
   archived: boolean;
 };
@@ -76,3 +77,5 @@ export type Blockout = {
   ends_on: string;
   reason: string | null;
 };
+
+export type Tutorial = { part: string; title: string; url: string };

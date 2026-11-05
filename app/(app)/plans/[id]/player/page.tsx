@@ -7,16 +7,17 @@ import { useLocations, useProfile } from "@/components/ProfileContext";
 import ChordSheet from "@/components/ChordSheet";
 import RehearsalPlayer from "@/components/RehearsalPlayer";
 import SongListen from "@/components/SongListen";
+import Tutorials from "@/components/Tutorials";
 import { prefersFlats, semitonesBetween } from "@/lib/chordpro";
 import { fileExt, fileIcon, isAudio } from "@/lib/media";
 import { fmtDate, planLabel } from "@/lib/format";
 import type { Plan, PlanItem, Song } from "@/lib/types";
 
-type SongBits = Pick<Song, "id" | "title" | "author" | "chordpro" | "default_key" | "bpm" | "meter" | "notes" | "reference_url">;
+type SongBits = Pick<Song, "id" | "title" | "author" | "chordpro" | "default_key" | "bpm" | "meter" | "notes" | "reference_url" | "tutorials">;
 type Item = PlanItem & { songs: SongBits | null };
 type FileRow = { id: string; name: string; path: string };
 
-const TABS = ["Set list", "Chart", "Lyrics", "Files", "Notes"] as const;
+const TABS = ["Set list", "Chart", "Lyrics", "Tutorials", "Files", "Notes"] as const;
 type Tab = (typeof TABS)[number];
 
 // Plays through a service's songs in order, with the chart, lyrics, files and notes for each.
@@ -36,7 +37,7 @@ export default function SetPlayerPage() {
     supabase.from("plans").select("*").eq("id", params.id).maybeSingle().then(({ data }) => setPlan(data as Plan));
     supabase
       .from("plan_items")
-      .select("*, songs(id, title, author, chordpro, default_key, bpm, meter, notes, reference_url)")
+      .select("*, songs(*)")
       .eq("plan_id", params.id)
       .order("position")
       .then(({ data }) => setSongs(((data ?? []) as Item[]).filter((i) => i.kind === "song" && i.songs)));
@@ -114,6 +115,7 @@ export default function SetPlayerPage() {
           >
             {t}
             {t === "Files" && files.length > 0 && <span className="ml-1 text-accent">{files.length}</span>}
+            {t === "Tutorials" && (song?.tutorials?.length ?? 0) > 0 && <span className="ml-1 text-accent">{song?.tutorials?.length}</span>}
           </button>
         ))}
       </div>
@@ -165,6 +167,17 @@ export default function SetPlayerPage() {
             <ChordSheet source={song.chordpro} semis={semis} flats={prefersFlats(key)} showChords={tab === "Chart"} fontSize={18} />
           ) : (
             <p className="text-sm text-muted">No chart yet. {me.isLeader && <Link href={`/songs/${song.id}`} className="text-accent">Add one</Link>}</p>
+          )}
+        </div>
+      )}
+
+      {tab === "Tutorials" && song && (
+        <div className="card">
+          <Tutorials items={song.tutorials ?? []} />
+          {me.isLeader && (
+            <p className="mt-3 text-xs text-muted">
+              Add tutorial links on the <Link href={`/songs/${song.id}`} className="text-accent">song page</Link> (Edit → Tutorial videos).
+            </p>
           )}
         </div>
       )}

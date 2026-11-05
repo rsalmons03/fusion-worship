@@ -9,6 +9,7 @@ import ChartEditor from "@/components/ChartEditor";
 import SongFiles from "@/components/SongFiles";
 import SongListen from "@/components/SongListen";
 import RehearsalPlayer from "@/components/RehearsalPlayer";
+import Tutorials, { TutorialsEditor } from "@/components/Tutorials";
 import { KEYS, keyFromSource, prefersFlats, semitonesBetween, transposeKey } from "@/lib/chordpro";
 import { fmtDate } from "@/lib/format";
 import type { Song } from "@/lib/types";
@@ -49,6 +50,7 @@ export default function SongPage() {
   const [viewKey, setViewKey] = useState("");
   const [view, setView] = useState<"chords" | "numbers" | "lyrics">("chords");
   const [hadMt, setHadMt] = useState(false);
+  const [hadTut, setHadTut] = useState(false);
   const [filesVersion, setFilesVersion] = useState(0);
   const [history, setHistory] = useState<{ plan_id: string; date: string; key: string | null }[]>([]);
 
@@ -59,6 +61,7 @@ export default function SongPage() {
         const { id: _id, created_at: _c, updated_at: _u, ...rest } = data;
         setSong(rest as Omit<Song, "id">);
         setHadMt("multitracks_url" in rest);
+        setHadTut("tutorials" in rest);
         setViewKey(rest.default_key ?? "");
       }
       setLoaded(true);
@@ -88,6 +91,9 @@ export default function SongPage() {
       updated_at: new Date().toISOString(),
     };
     // Only send the MultiTracks field once the database has it (or when it's filled in).
+    // Same for tutorials: drop the field if the database doesn't have it yet and none were added.
+    payload.tutorials = (payload.tutorials ?? []).filter((t) => t.url.trim());
+    if (!hadTut && !payload.tutorials.length) delete payload.tutorials;
     if (!payload.multitracks_url) {
       if (hadMt) payload.multitracks_url = null;
       else delete payload.multitracks_url;
@@ -180,6 +186,10 @@ export default function SongPage() {
             </div>
             {!isNew && <SongFiles songId={params.id} canEdit={canEdit} onChange={() => setFilesVersion((v) => v + 1)} />}
             {isNew && <p className="text-sm text-muted">Save the song first, then you can upload audio, PDFs and other files.</p>}
+            <div>
+              <span className="label">Tutorial videos (drums, bass, keys…)</span>
+              <TutorialsEditor items={song.tutorials ?? []} onChange={(t) => set("tutorials", t)} />
+            </div>
             <F label="Arrangement notes"><textarea className="input" rows={2} value={song.notes ?? ""} onChange={(e) => set("notes", e.target.value)} /></F>
             <div className="flex gap-2">
               <button className="btn" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save song"}</button>
@@ -221,6 +231,12 @@ export default function SongPage() {
           <aside className="space-y-4">
             {song.multitracks_url && (
               <a href={song.multitracks_url} target="_blank" rel="noreferrer" className="btn w-full">Open in MultiTracks</a>
+            )}
+            {(song.tutorials?.length ?? 0) > 0 && (
+              <div className="card">
+                <div className="label mb-2">Tutorials</div>
+                <Tutorials items={song.tutorials ?? []} />
+              </div>
             )}
             {!isNew && (
               <div className="card">

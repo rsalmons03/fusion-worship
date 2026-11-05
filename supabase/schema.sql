@@ -432,3 +432,6 @@ alter table song_files add column if not exists markers jsonb not null default '
 
 -- ───────────────────────── Stems ─────────────────────────
 alter table song_files add column if not exists is_stem boolean not null default false;
+
+-- ───────────────────────── Song tutorials ─────────────────────────
+alter table songs add column if not exists tutorials jsonb not null default '[]'::jsonb;
