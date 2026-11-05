@@ -37,6 +37,8 @@ export default function SetPlayerPage() {
   const [files, setFiles] = useState<FileRow[]>([]);
   // Lyrics screen: when "follow" is on, the slides change by themselves as the track plays.
   const screen = useScreenSync(params.id);
+  const [pos, setPos] = useState<{ n: number | null; progress: number } | null>(null);
+  useEffect(() => setPos(null), [idx]);
   const { slides } = usePlanSlides(params.id, screen.state.lines);
 
   useEffect(() => {
@@ -157,6 +159,7 @@ export default function SetPlayerPage() {
             onNextSong={(playing) => go(idx + 1, playing)}
             hideRoadmap={tab !== "Chart" && tab !== "Lyrics"}
             onPosition={(pos) => {
+              setPos(pos.n === null ? null : { n: pos.n, progress: pos.progress });
               const st = screen.state;
               if (!st.follow || !pos.playing || !item) return;
               const i = slideForPosition(slides, item.id, pos);
@@ -192,7 +195,7 @@ export default function SetPlayerPage() {
             {song.meter && <span>{song.meter}</span>}
           </div>
           {song.chordpro.trim() ? (
-            <ChordSheet source={song.chordpro} semis={semis} flats={prefersFlats(key)} showChords={tab === "Chart"} fontSize={18} />
+            <ChordSheet source={song.chordpro} semis={semis} flats={prefersFlats(key)} showChords={tab === "Chart"} fontSize={18} follow={pos} />
           ) : (
             <p className="text-sm text-muted">No chart yet. {me.isLeader && <Link href={`/songs/${song.id}`} className="text-accent">Add one</Link>}</p>
           )}

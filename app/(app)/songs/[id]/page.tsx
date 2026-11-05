@@ -45,6 +45,7 @@ export default function SongPage() {
   const router = useRouter();
   const supabase = createClient();
   const [song, setSong] = useState<Omit<Song, "id">>(EMPTY);
+  const [pos, setPos] = useState<{ n: number | null; progress: number } | null>(null);
   const [loaded, setLoaded] = useState(isNew);
   const [editing, setEditing] = useState(isNew);
   const [saving, setSaving] = useState(false);
@@ -257,8 +258,8 @@ export default function SongPage() {
               </div>
               <button className="btn-ghost" onClick={() => window.print()}>Print</button>
             </div>
-            <RehearsalPlayer key={filesVersion} songId={params.id} chart={song.chordpro} canEdit={canEdit} />
-            <ChordSheet source={song.chordpro} semis={semis} flats={flats} showChords={view !== "lyrics"} numbersKey={view === "numbers" ? song.default_key : null} />
+            <RehearsalPlayer key={filesVersion} songId={params.id} chart={song.chordpro} canEdit={canEdit} bpm={song.bpm} onPosition={(p) => setPos(p.n === null ? null : { n: p.n, progress: p.progress })} />
+            <ChordSheet source={song.chordpro} semis={semis} flats={flats} showChords={view !== "lyrics"} numbersKey={view === "numbers" ? song.default_key : null} follow={pos} />
           </div>
           <aside className="space-y-4">
             {song.multitracks_url && (

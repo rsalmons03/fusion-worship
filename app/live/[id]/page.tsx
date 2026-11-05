@@ -25,6 +25,8 @@ export default function LiveView() {
   const [dark, setDark] = useState(true);
   const [numbers, setNumbers] = useState(false);
   const [listen, setListen] = useState(false);
+  const [pos, setPos] = useState<{ n: number | null; progress: number } | null>(null);
+  useEffect(() => setPos(null), [idx]);
 
   useEffect(() => {
     try {
@@ -132,10 +134,10 @@ export default function LiveView() {
           )}
           {item.description && <p className="mb-4 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">{item.description}</p>}
           {item.songs && item.song_id && (
-            <RehearsalPlayer key={item.song_id} songId={item.song_id} chart={item.songs.chordpro} canEdit={false} dark={dark} bottomOffset={60} />
+            <RehearsalPlayer key={item.song_id} songId={item.song_id} chart={item.songs.chordpro} canEdit={false} dark={dark} bottomOffset={60} bpm={item.songs.bpm} onPosition={(p) => setPos(p.n === null ? null : { n: p.n, progress: p.progress })} />
           )}
           {item.songs ? (
-            <ChordSheet source={item.songs.chordpro} semis={semis} flats={prefersFlats(shownKey)} showChords={chords} fontSize={size} dark={dark} numbersKey={numbers ? item.songs.default_key : null} />
+            <ChordSheet source={item.songs.chordpro} semis={semis} flats={prefersFlats(shownKey)} showChords={chords} fontSize={size} dark={dark} numbersKey={numbers ? item.songs.default_key : null} follow={pos} />
           ) : (
             <p className="opacity-60">{item.duration_sec ?? (item.duration_min ? item.duration_min * 60 : 0) ? fmtLen(item.duration_sec ?? (item.duration_min ?? 0) * 60) : ""}</p>
           )}
