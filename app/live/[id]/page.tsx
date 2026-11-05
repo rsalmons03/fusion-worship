@@ -59,7 +59,9 @@ export default function LiveView() {
     return () => window.removeEventListener("keydown", onKey);
   }, [items.length]);
 
-  useEffect(() => window.scrollTo(0, 0), [idx]);
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [idx]);
 
   const item = items[idx];
   const baseKey = item?.songs?.default_key ?? null;

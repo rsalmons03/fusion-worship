@@ -513,6 +513,7 @@ export default function PlanPage() {
               <div className="flex flex-wrap items-center gap-2 print:hidden">
                 <Link href={`/plans/${plan.id}/player`} className="btn-secondary">▶ Play</Link>
                 <Link href={`/live/${plan.id}`} className="btn-secondary">📡 Live</Link>
+                <Link href={`/remote/${plan.id}`} className="btn-secondary" title="Lyrics on the TV/projector, controlled from your phone">🖥 Lyrics screen</Link>
                 <span className="text-sm text-muted">{items.filter((i) => i.kind !== "header").length} items{totalSec > 0 && ` · ${fmtLen(totalSec)}`}</span>
                 {(() => {
                   const songsN = items.filter((i) => i.kind === "song").length;

@@ -18,3 +18,15 @@ body { @apply bg-paper text-ink antialiased; }
 @media print {
   body { background: white; }
 }
+
+/* Lyrics screen: moving background blobs and slide fade */
+.fw-blob { position: absolute; width: 90%; height: 120%; border-radius: 9999px; filter: blur(4cqw); opacity: .9; will-change: transform; }
+.fw-blob-0 { left: -25%; top: -30%; animation: fw-drift-a 26s ease-in-out infinite alternate; }
+.fw-blob-1 { right: -30%; bottom: -40%; animation: fw-drift-b 32s ease-in-out infinite alternate; }
+.fw-blob-2 { left: 20%; top: 10%; width: 60%; height: 80%; animation: fw-drift-c 22s ease-in-out infinite alternate; }
+@keyframes fw-drift-a { from { transform: translate(0, 0) scale(1); } to { transform: translate(30%, 20%) scale(1.25); } }
+@keyframes fw-drift-b { from { transform: translate(0, 0) scale(1.1); } to { transform: translate(-35%, -25%) scale(.9); } }
+@keyframes fw-drift-c { from { transform: translate(-20%, 10%) scale(.8); } to { transform: translate(25%, -15%) scale(1.2); } }
+.fw-fade { animation: fw-fade .45s ease-out; }
+@keyframes fw-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .fw-blob { animation: none; } }
