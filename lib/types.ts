@@ -9,6 +9,8 @@ export type Profile = {
   location_id: string | null;
   /** Admin-given "confirmed member" check: reliable to show up. */
   verified?: boolean;
+  member_since?: string | null;
+  created_at?: string;
 };
 
 export type Location = { id: string; name: string; sort: number };
@@ -70,6 +72,7 @@ export type Assignment = {
   status: AssignmentStatus;
   notified_at: string | null;
   responded_at: string | null;
+  attendance?: "present" | "no_show" | null;
 };
 
 export type Blockout = {

@@ -38,6 +38,12 @@ export default function PeoplePage() {
     load();
   }
 
+  async function setMemberSince(p: Profile, date: string) {
+    const { error } = await supabase.from("profiles").update({ member_since: date }).eq("id", p.id);
+    if (error) return alert(/member_since/.test(error.message) ? "This needs the database update 009_attendance.sql. " + error.message : error.message);
+    load();
+  }
+
   async function toggleVerified(p: Profile) {
     const { error } = await supabase.from("profiles").update({ verified: !p.verified }).eq("id", p.id);
     if (error) return alert(/verified/.test(error.message) ? "This needs the database update 008_verified.sql. " + error.message : error.message);
@@ -134,6 +140,15 @@ export default function PeoplePage() {
                   <span className="flex items-center gap-1">
                     {p.full_name || "—"} <Verified on={p.verified} />
                   </span>
+                  <label className="mt-1 flex items-center gap-1 text-[11px] font-normal text-muted">
+                    Member since
+                    <input
+                      type="date"
+                      className="rounded-sm border border-line bg-white px-1 py-0.5 text-[11px]"
+                      defaultValue={(p.member_since || p.created_at || "").slice(0, 10)}
+                      onBlur={(e) => e.target.value && e.target.value !== (p.member_since ?? "") && setMemberSince(p, e.target.value)}
+                    />
+                  </label>
                   <button
                     className={`mt-1 rounded-sm px-1.5 py-0.5 text-[10px] font-bold uppercase ${p.verified ? "bg-[#1d9bf0] text-white" : "border border-line text-muted"}`}
                     onClick={() => toggleVerified(p)}

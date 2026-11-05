@@ -10,7 +10,7 @@ import SongListen from "@/components/SongListen";
 import PlanTimes from "@/components/plan/PlanTimes";
 import PlanFiles from "@/components/plan/PlanFiles";
 import { KEYS } from "@/lib/chordpro";
-import { addMinutes, fmtDate, fmtTime, planLabel } from "@/lib/format";
+import { addMinutes, fmtDate, fmtTime, planLabel, todayISO } from "@/lib/format";
 import type {
   Assignment,
   Blockout,
@@ -103,6 +103,15 @@ export default function PlanPage() {
       base().gt("service_date", plan.service_date).order("service_date").limit(1),
     ]).then(([a, b]) => setNeighbors({ prev: a.data?.[0]?.id ?? null, next: b.data?.[0]?.id ?? null }));
   }, [plan?.id, plan?.service_date, plan?.location_id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function markAttendance(id: string, attendance: "present" | "no_show" | null) {
+    setAssignments((xs) => xs.map((x) => (x.id === id ? { ...x, attendance } : x)));
+    const { error } = await supabase.from("assignments").update({ attendance }).eq("id", id);
+    if (error) {
+      alert(/attendance/.test(error.message) ? "Attendance needs the database update 009_attendance.sql. " + error.message : error.message);
+      loadAssignments();
+    }
+  }
 
   async function respond(id: string, status: "accepted" | "declined") {
     const { error } = await supabase.from("assignments").update({ status }).eq("id", id);
@@ -217,6 +226,7 @@ export default function PlanPage() {
   const planTeams = teams.filter((t) => !t.location_id || !plan.location_id || t.location_id === plan.location_id);
 
   const myAssignments = assignments.filter((a) => a.profile_id === me.id);
+  const isPast = plan.service_date <= todayISO();
   const posName = (id: string) => {
     const p = positions.find((x) => x.id === id);
     const t = teams.find((x) => x.id === p?.team_id);
@@ -382,6 +392,7 @@ export default function PlanPage() {
               </button>
             )}
           </div>
+          {isPast && canEdit && <p className="text-sm text-muted print:hidden">After the service: tap <b>Here</b> or <b>No-show</b> for each person. No-shows count toward Team health.</p>}
           {planTeams.length === 0 && <p className="text-sm text-muted">No teams yet. <Link href="/teams" className="text-accent">Set up teams</Link></p>}
           <div className="grid gap-4 md:grid-cols-2">
           {orderedTeams.map((team) => (
@@ -406,7 +417,26 @@ export default function PlanPage() {
                       {here.map((a) => (
                         <div key={a.id} className="flex items-center gap-2 py-0.5">
                           <span className="flex-1">{personName(a.profile_id)} <Verified on={people.find((x) => x.id === a.profile_id)?.verified} />{blocked.has(a.profile_id) && <span className="ml-1 text-xs text-bad">(blocked out)</span>}</span>
-                          <StatusChip status={a.status} />
+                          {isPast && canEdit && a.status === "accepted" ? (
+                            <span className="flex overflow-hidden rounded-sm border border-line text-xs font-bold print:hidden">
+                              <button
+                                className={`px-2 py-0.5 ${a.attendance === "present" ? "bg-ok text-white" : "text-muted"}`}
+                                onClick={() => markAttendance(a.id, a.attendance === "present" ? null : "present")}
+                              >
+                                Here
+                              </button>
+                              <button
+                                className={`border-l border-line px-2 py-0.5 ${a.attendance === "no_show" ? "bg-bad text-white" : "text-muted"}`}
+                                onClick={() => markAttendance(a.id, a.attendance === "no_show" ? null : "no_show")}
+                              >
+                                No-show
+                              </button>
+                            </span>
+                          ) : a.attendance === "no_show" ? (
+                            <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">No-show</span>
+                          ) : (
+                            <StatusChip status={a.status} />
+                          )}
                           {canEdit && <button className="btn-ghost px-1 print:hidden" onClick={() => unassign(a.id)} aria-label="Remove">✕</button>}
                         </div>
                       ))}

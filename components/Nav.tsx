@@ -17,7 +17,14 @@ export default function Nav() {
     { href: "/plans", label: "Plans" },
     { href: "/songs", label: "Songs" },
     { href: "/teams", label: "Teams" },
-    ...(me.isLeader ? [{ href: "/confirmations", label: "Confirmations" }, { href: "/roster", label: "Roster" }] : []),
+    { href: "/calendar", label: "Calendar" },
+    ...(me.isLeader
+      ? [
+          { href: "/confirmations", label: "Confirmations" },
+          { href: "/roster", label: "Roster" },
+          { href: "/health", label: "Team health" },
+        ]
+      : []),
     { href: "/trainings", label: "Trainings" },
     ...(me.isAdmin ? [{ href: "/people", label: "People" }] : []),
     { href: "/me", label: "My Profile" },
