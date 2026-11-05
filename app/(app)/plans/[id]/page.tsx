@@ -11,8 +11,9 @@ import SongListen from "@/components/SongListen";
 import PlanTimes from "@/components/plan/PlanTimes";
 import PlanFiles from "@/components/plan/PlanFiles";
 import { applyTemplate, itemsToTemplate, loadTemplates } from "@/lib/templates";
+import { addSeconds, fmtLen, lenPatch, parseLen, secOf } from "@/lib/duration";
 import { KEYS } from "@/lib/chordpro";
-import { addMinutes, fmtDate, fmtTime, planLabel, todayISO } from "@/lib/format";
+import { fmtDate, fmtTime, planLabel, todayISO } from "@/lib/format";
 import type {
   Assignment,
   Blockout,
@@ -194,7 +195,13 @@ export default function PlanPage() {
 
   async function saveItem(id: string, patch: Partial<PlanItem>) {
     setItems((xs) => xs.map((x) => (x.id === id ? { ...x, ...patch } : x)));
-    await supabase.from("plan_items").update(patch).eq("id", id);
+    const { error } = await supabase.from("plan_items").update(patch).eq("id", id);
+    if (error && /duration_sec/.test(error.message)) {
+      // Database without seconds yet (update 011): save whole minutes only.
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { duration_sec, ...rest } = patch;
+      await supabase.from("plan_items").update(rest).eq("id", id);
+    } else if (error) alert(error.message);
   }
 
   async function removeItem(id: string) {
@@ -220,11 +227,18 @@ export default function PlanPage() {
     let t = plan?.start_time ?? null;
     return items.map((it) => {
       const at = t;
-      if (t && it.duration_min) t = addMinutes(t, it.duration_min);
+      const sec = secOf(it);
+      if (t && sec) t = addSeconds(t, sec);
       return at;
     });
   }, [items, plan?.start_time]);
-  const totalMin = items.reduce((n, x) => n + (x.duration_min ?? 0), 0);
+  const totalSec = items.reduce((n, x) => n + (secOf(x) ?? 0), 0);
+  // Length of each section (from its header to the next one).
+  const sectionSec = (i: number) => {
+    let n = 0;
+    for (let j = i + 1; j < items.length && items[j].kind !== "header"; j++) n += secOf(items[j]) ?? 0;
+    return n;
+  };
 
   // ── Scheduling ──
   const personName = (id: string) => displayName(people.find((x) => x.id === id));
@@ -279,7 +293,6 @@ export default function PlanPage() {
   const orderedTeams = [...planTeams].sort((a, b) => Number(myTeamIds.has(b.id)) - Number(myTeamIds.has(a.id)));
   const songItems = items.filter((i) => i.kind === "song" && i.song_id).map((i) => ({ id: i.song_id!, title: i.title }));
 
-  const fmtLen = (m: number | null) => (m == null ? "" : `${m}:00`);
   const teamAssignments = (teamId: string) => assignments.filter((a) => positions.some((p) => p.id === a.position_id && p.team_id === teamId));
   const statusOf = (a: Assignment) => (a.attendance === "no_show" ? "no_show" : a.status);
 
@@ -462,7 +475,7 @@ export default function PlanPage() {
               <div className="flex flex-wrap items-center gap-2 print:hidden">
                 <Link href={`/plans/${plan.id}/player`} className="btn-secondary">▶ Play</Link>
                 <Link href={`/live/${plan.id}`} className="btn-secondary">📡 Live</Link>
-                <span className="text-sm text-muted">{items.filter((i) => i.kind !== "header").length} items{totalMin > 0 && ` · ${totalMin} min`}</span>
+                <span className="text-sm text-muted">{items.filter((i) => i.kind !== "header").length} items{totalSec > 0 && ` · ${fmtLen(totalSec)}`}</span>
                 {canEdit && (
                   <button className={`ml-auto ${editOrder ? "btn" : "btn-secondary"}`} onClick={() => setEditOrder(!editOrder)}>
                     {editOrder ? "✓ Done editing" : "✏ Edit order"}
@@ -497,11 +510,12 @@ export default function PlanPage() {
                   <ul>
                     {items.map((it, i) =>
                       it.kind === "header" ? (
-                        <li key={it.id} className="border-b border-line bg-stone-100 px-4 py-2 text-xs font-bold uppercase tracking-wider text-ink">
-                          {it.title}
+                        <li key={it.id} className="flex border-b border-line bg-stone-100 px-4 py-2 text-xs font-bold uppercase tracking-wider text-ink">
+                          <span className="flex-1">{it.title}</span>
+                          {sectionSec(i) > 0 && <span className="font-semibold tabular-nums text-muted">{fmtLen(sectionSec(i))}</span>}
                         </li>
                       ) : (
-                        <ViewRow key={it.id} item={it} start={times[i]} length={fmtLen(it.duration_min)} />
+                        <ViewRow key={it.id} item={it} start={times[i]} length={fmtLen(secOf(it) ?? 0)} />
                       )
                     )}
                   </ul>
@@ -837,9 +851,20 @@ function ItemRow({
       </div>
       <div className="flex shrink-0 items-start gap-1">
         {canEdit ? (
-          <input type="number" min={0} className="w-14 rounded border border-line px-1 py-0.5 text-right text-xs" title="Minutes" defaultValue={item.duration_min ?? ""} onBlur={(e) => onSave({ duration_min: e.target.value ? Number(e.target.value) : null })} />
+          <input
+            className="w-16 rounded border border-line px-1 py-0.5 text-right text-xs tabular-nums"
+            title="Length (m:ss)"
+            placeholder="m:ss"
+            defaultValue={fmtLen(secOf(item))}
+            onBlur={(e) => {
+              const sec = parseLen(e.target.value);
+              if (e.target.value.trim() && sec == null) return alert("Use minutes:seconds, like 4:56 or 15");
+              if (sec !== secOf(item)) onSave(lenPatch(sec));
+              e.target.value = fmtLen(sec);
+            }}
+          />
         ) : (
-          item.duration_min != null && <span className="text-xs text-muted">{item.duration_min}m</span>
+          secOf(item) != null && <span className="text-xs text-muted">{fmtLen(secOf(item))}</span>
         )}
         {canEdit && <Controls first={first} last={last} onMove={onMove} onRemove={onRemove} />}
       </div>

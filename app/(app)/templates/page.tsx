@@ -3,7 +3,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useLocations, useProfile } from "@/components/ProfileContext";
-import { addMinutes, fmtTime } from "@/lib/format";
+import { fmtTime } from "@/lib/format";
+import { addSeconds, fmtLen, lenPatch, parseLen, secOf } from "@/lib/duration";
 import type { ItemKind, OrderTemplate, TemplateItem } from "@/lib/types";
 
 /** Standard orders of service that new plans can start from. */
@@ -87,7 +88,7 @@ function TemplateCard({ t, open, onToggle, onChanged, canEdit }: { t: OrderTempl
     change(next);
   };
   const add = (kind: ItemKind) =>
-    change([...items, { kind, title: kind === "header" ? "New section" : "New item", duration_min: kind === "header" ? null : 5, description: null }]);
+    change([...items, { kind, title: kind === "header" ? "New section" : "New item", ...(kind === "header" ? lenPatch(null) : lenPatch(300)), description: null }]);
 
   async function save() {
     setSaving(true);
@@ -119,7 +120,12 @@ function TemplateCard({ t, open, onToggle, onChanged, canEdit }: { t: OrderTempl
   }
 
   let clock = start || null;
-  const total = items.reduce((n, x) => n + (x.duration_min ?? 0), 0);
+  const total = items.reduce((n, x) => n + (secOf(x) ?? 0), 0);
+  const sectionSec = (i: number) => {
+    let n = 0;
+    for (let j = i + 1; j < items.length && items[j].kind !== "header"; j++) n += secOf(items[j]) ?? 0;
+    return n;
+  };
 
   return (
     <section className="overflow-hidden rounded-lg border border-line bg-white shadow-sm">
@@ -128,7 +134,7 @@ function TemplateCard({ t, open, onToggle, onChanged, canEdit }: { t: OrderTempl
           <span className="font-display text-lg font-bold">{t.name}</span>
           {t.is_default && <span className="ml-2 rounded-full bg-accent px-2 py-0.5 align-middle text-[10px] font-bold uppercase text-white">★ Default</span>}
           <span className="block text-sm text-muted">
-            {t.location_id ? loc.name(t.location_id) : "All locations"} · {t.items.filter((x) => x.kind !== "header").length} items · {t.items.reduce((n, x) => n + (x.duration_min ?? 0), 0)} min
+            {t.location_id ? loc.name(t.location_id) : "All locations"} · {t.items.filter((x) => x.kind !== "header").length} items · {fmtLen(t.items.reduce((n, x) => n + (secOf(x) ?? 0), 0))}
           </span>
         </span>
         <span className="text-muted">{open ? "▴" : "▾"}</span>
@@ -145,12 +151,13 @@ function TemplateCard({ t, open, onToggle, onChanged, canEdit }: { t: OrderTempl
           )}
           <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] border-y border-line px-4 py-2 text-[11px] font-bold uppercase tracking-[0.15em] text-muted">
             <span>Length</span>
-            <span>Title · {total} min</span>
+            <span>Title · total {fmtLen(total)}</span>
           </div>
           <ul>
             {items.map((it, i) => {
               const at = clock;
-              if (clock && it.duration_min) clock = addMinutes(clock, it.duration_min);
+              const sec = secOf(it);
+              if (clock && sec) clock = addSeconds(clock, sec);
               return it.kind === "header" ? (
                 <li key={i} className="flex items-center gap-2 border-b border-line bg-stone-100 px-4 py-2">
                   {canEdit ? (
@@ -158,15 +165,16 @@ function TemplateCard({ t, open, onToggle, onChanged, canEdit }: { t: OrderTempl
                   ) : (
                     <span className="flex-1 text-xs font-bold uppercase tracking-wider">{it.title}</span>
                   )}
+                  {sectionSec(i) > 0 && <span className="text-xs font-semibold tabular-nums text-muted">{fmtLen(sectionSec(i))}</span>}
                   {canEdit && <RowControls i={i} n={items.length} move={move} remove={() => change(items.filter((_, j) => j !== i))} />}
                 </li>
               ) : (
                 <li key={i} className="grid grid-cols-[4.5rem_minmax(0,1fr)_auto] gap-x-2 border-b border-line px-4 py-2.5">
                   <div className="text-sm tabular-nums">
                     {canEdit ? (
-                      <input type="number" min={0} className="w-14 rounded border border-line px-1 py-0.5 text-right text-xs" value={it.duration_min ?? ""} onChange={(e) => set(i, { duration_min: e.target.value === "" ? null : Number(e.target.value) })} aria-label="Minutes" />
+                      <LenInput sec={secOf(it)} onChange={(sec) => set(i, lenPatch(sec))} />
                     ) : (
-                      <span className="font-semibold">{it.duration_min ?? 0}:00</span>
+                      <span className="font-semibold">{fmtLen(secOf(it) ?? 0)}</span>
                     )}
                     {at && <div className="text-xs text-muted">{fmtTime(at)}</div>}
                   </div>
@@ -216,5 +224,27 @@ function RowControls({ i, n, move, remove }: { i: number; n: number; move: (i: n
       <button className="btn-ghost px-1" disabled={i === n - 1} onClick={() => move(i, 1)} aria-label="Move down">↓</button>
       <button className="btn-ghost px-1" onClick={remove} aria-label="Remove">✕</button>
     </span>
+  );
+}
+
+function LenInput({ sec, onChange }: { sec: number | null; onChange: (sec: number | null) => void }) {
+  const [v, setV] = useState(fmtLen(sec));
+  useEffect(() => setV(fmtLen(sec)), [sec]);
+  return (
+    <input
+      className="w-16 rounded border border-line px-1 py-0.5 text-right text-xs tabular-nums"
+      aria-label="Length (m:ss)"
+      placeholder="m:ss"
+      value={v}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={() => {
+        const s = parseLen(v);
+        if (v.trim() && s == null) {
+          alert("Use minutes:seconds, like 4:56 or 15");
+          return setV(fmtLen(sec));
+        }
+        onChange(s);
+      }}
+    />
   );
 }

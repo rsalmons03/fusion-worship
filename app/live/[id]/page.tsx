@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import ChordSheet from "@/components/ChordSheet";
+import { fmtLen } from "@/lib/duration";
 import SongListen from "@/components/SongListen";
 import RehearsalPlayer from "@/components/RehearsalPlayer";
 import { prefersFlats, semitonesBetween, transposeKey } from "@/lib/chordpro";
@@ -134,7 +135,7 @@ export default function LiveView() {
           {item.songs ? (
             <ChordSheet source={item.songs.chordpro} semis={semis} flats={prefersFlats(shownKey)} showChords={chords} fontSize={size} dark={dark} numbersKey={numbers ? item.songs.default_key : null} />
           ) : (
-            <p className="opacity-60">{item.duration_min ? `${item.duration_min} min` : ""}</p>
+            <p className="opacity-60">{item.duration_sec ?? (item.duration_min ? item.duration_min * 60 : 0) ? fmtLen(item.duration_sec ?? (item.duration_min ?? 0) * 60) : ""}</p>
           )}
         </main>
       )}

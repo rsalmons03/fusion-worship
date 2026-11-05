@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { OrderTemplate, TemplateItem } from "./types";
+import { secOf } from "./duration";
 
 /** Puts a template's order of service into a plan (replacing or adding to what's there). */
 export async function applyTemplate(supabase: SupabaseClient, t: Pick<OrderTemplate, "items">, planId: string, mode: "replace" | "append" = "replace") {
@@ -12,27 +13,31 @@ export async function applyTemplate(supabase: SupabaseClient, t: Pick<OrderTempl
     start = data?.[0]?.position ?? 0;
   }
   if (!t.items.length) return null;
-  const { error } = await supabase.from("plan_items").insert(
-    t.items.map((it, i) => ({
-      plan_id: planId,
-      position: start + i + 1,
-      kind: it.kind,
-      title: it.title,
-      duration_min: it.duration_min,
-      description: it.description,
-      song_id: null,
-      song_key: null,
-    }))
-  );
+  const rows = t.items.map((it, i) => ({
+    plan_id: planId,
+    position: start + i + 1,
+    kind: it.kind,
+    title: it.title,
+    duration_min: it.duration_min,
+    duration_sec: secOf(it),
+    description: it.description,
+    song_id: null,
+    song_key: null,
+  }));
+  let { error } = await supabase.from("plan_items").insert(rows);
+  // Database without seconds yet (update 011): save whole minutes only.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  if (error && /duration_sec/.test(error.message)) ({ error } = await supabase.from("plan_items").insert(rows.map(({ duration_sec, ...r }) => r)));
   return error?.message ?? null;
 }
 
 /** A plan's order of service as template rows (songs become "song" rows by name only). */
-export function itemsToTemplate(items: { kind: string; title: string; duration_min: number | null; description: string | null }[]): TemplateItem[] {
+export function itemsToTemplate(items: { kind: string; title: string; duration_min: number | null; duration_sec?: number | null; description: string | null }[]): TemplateItem[] {
   return items.map((i) => ({
     kind: i.kind === "song" ? "item" : (i.kind as TemplateItem["kind"]),
     title: i.title,
     duration_min: i.duration_min,
+    duration_sec: secOf(i),
     description: i.description,
   }));
 }

@@ -56,6 +56,7 @@ export type PlanItem = {
   song_id: string | null;
   song_key: string | null;
   duration_min: number | null;
+  duration_sec?: number | null;
   description: string | null;
 };
 
@@ -85,7 +86,7 @@ export type Blockout = {
 
 export type Tutorial = { part: string; title: string; url: string };
 
-export type TemplateItem = { kind: ItemKind; title: string; duration_min: number | null; description: string | null };
+export type TemplateItem = { kind: ItemKind; title: string; duration_min: number | null; duration_sec?: number | null; description: string | null };
 export type OrderTemplate = {
   id: string;
   name: string;
