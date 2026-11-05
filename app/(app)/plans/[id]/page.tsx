@@ -10,6 +10,7 @@ import Avatar, { displayName } from "@/components/Avatar";
 import SongListen from "@/components/SongListen";
 import PlanTimes from "@/components/plan/PlanTimes";
 import PlanFiles from "@/components/plan/PlanFiles";
+import { applyTemplate, itemsToTemplate, loadTemplates } from "@/lib/templates";
 import { KEYS } from "@/lib/chordpro";
 import { addMinutes, fmtDate, fmtTime, planLabel, todayISO } from "@/lib/format";
 import type {
@@ -24,6 +25,7 @@ import type {
   ServiceType,
   Song,
   Team,
+  OrderTemplate,
 } from "@/lib/types";
 
 type SongLite = Pick<Song, "id" | "title" | "author" | "default_key">;
@@ -54,6 +56,10 @@ export default function PlanPage() {
   const [tab, setTab] = useState<Tab>("Order");
   const [showDetails, setShowDetails] = useState(false);
   const [editOrder, setEditOrder] = useState(false);
+  const [templates, setTemplates] = useState<OrderTemplate[]>([]);
+  useEffect(() => {
+    if (editOrder) loadTemplates(supabase).then(setTemplates);
+  }, [editOrder]); // eslint-disable-line react-hooks/exhaustive-deps
   const [addingTo, setAddingTo] = useState<string | null>(null);
   const [planTimes, setPlanTimes] = useState<{ id: string; kind: string; label: string | null; day: string; starts: string | null; ends: string | null }[]>([]);
   const [neighbors, setNeighbors] = useState<{ prev: string | null; next: string | null }>({ prev: null, next: null });
@@ -119,6 +125,38 @@ export default function PlanPage() {
       alert(/attendance/.test(error.message) ? "Attendance needs the database update 009_attendance.sql. " + error.message : error.message);
       loadAssignments();
     }
+  }
+
+  async function loadTemplate(id: string) {
+    const t = templates.find((x) => x.id === id);
+    if (!t) return;
+    let mode: "replace" | "append" = "replace";
+    if (items.length) {
+      const replace = confirm(`Replace this plan's ${items.length} items with "${t.name}"?\n\nOK = replace · Cancel = add to the end`);
+      mode = replace ? "replace" : "append";
+    }
+    const err = await applyTemplate(supabase, t, planId, mode);
+    if (err) return alert(err);
+    if (!plan?.start_time && t.start_time) savePlan({ start_time: t.start_time });
+    loadItems();
+  }
+
+  async function saveAsTemplate() {
+    if (!plan) return;
+    const existing = templates.filter((t) => !t.location_id || t.location_id === plan.location_id);
+    const name = prompt(
+      `Save this order as a template.\nType a new name, or an existing one to overwrite it:${existing.length ? "\n• " + existing.map((t) => t.name).join("\n• ") : ""}`,
+      existing.find((t) => t.is_default)?.name ?? `${loc.name(plan.location_id) || "Standard"} standard`
+    );
+    if (!name?.trim()) return;
+    const rows = itemsToTemplate(items);
+    const same = existing.find((t) => t.name.toLowerCase() === name.trim().toLowerCase());
+    const { error } = same
+      ? await supabase.from("order_templates").update({ items: rows, start_time: plan.start_time, updated_at: new Date().toISOString() }).eq("id", same.id)
+      : await supabase.from("order_templates").insert({ name: name.trim(), location_id: plan.location_id, items: rows, start_time: plan.start_time, is_default: !existing.some((t) => t.is_default) });
+    if (error) return alert(/order_templates/.test(error.message) ? "Templates need the database update 010_templates.sql. " + error.message : error.message);
+    alert(same ? `Template "${same.name}" updated.` : `Saved as template "${name.trim()}".`);
+    loadTemplates(supabase).then(setTemplates);
   }
 
   async function respond(id: string, status: "accepted" | "declined") {
@@ -451,6 +489,7 @@ export default function PlanPage() {
                         onSave={(patch) => saveItem(it.id, patch)}
                         onRemove={() => removeItem(it.id)}
                         onMove={(d) => move(i, d)}
+                        songs={songs}
                       />
                     ))}
                   </ul>
@@ -468,6 +507,19 @@ export default function PlanPage() {
                   </ul>
                 )}
                 {editOrder && <AddBar songs={songs} onAdd={addItem} />}
+                {editOrder && (
+                  <div className="flex flex-wrap items-center gap-2 border-t border-line bg-stone-50 px-4 py-3 print:hidden">
+                    <span className="text-xs font-bold uppercase tracking-wide text-muted">Templates</span>
+                    <select className="input w-auto py-1.5 text-sm" value="" onChange={(e) => e.target.value && loadTemplate(e.target.value)}>
+                      <option value="">Load a template…</option>
+                      {templates
+                        .filter((t) => !t.location_id || t.location_id === plan.location_id)
+                        .map((t) => <option key={t.id} value={t.id}>{t.is_default ? "★ " : ""}{t.name}</option>)}
+                    </select>
+                    <button className="btn-secondary py-1.5 text-sm" onClick={saveAsTemplate} disabled={!items.length}>Save as template</button>
+                    <Link href="/templates" className="text-sm text-accent">Manage templates</Link>
+                  </div>
+                )}
               </section>
             </div>
           )}
@@ -674,6 +726,7 @@ function ItemRow({
   onSave,
   onRemove,
   onMove,
+  songs = [],
 }: {
   item: PlanItem;
   time: string | null;
@@ -683,8 +736,18 @@ function ItemRow({
   onSave: (p: Partial<PlanItem>) => void;
   onRemove: () => void;
   onMove: (d: -1 | 1) => void;
+  songs?: SongLite[];
 }) {
   const [listening, setListening] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [q, setQ] = useState("");
+  const isSlot = item.kind === "item" && /^(song\b|closing song|worship song)/i.test(item.title.trim());
+  const found = q.trim() ? songs.filter((s) => `${s.title} ${s.author ?? ""}`.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 6) : [];
+  const pick = (s: SongLite) => {
+    onSave({ kind: "song", song_id: s.id, title: s.title, song_key: s.default_key });
+    setPicking(false);
+    setQ("");
+  };
   if (item.kind === "header") {
     return (
       <li className="flex items-center gap-2 border-b border-line bg-stone-50 px-4 py-2">
@@ -734,6 +797,32 @@ function ItemRow({
           />
         ) : (
           item.description && <p className="whitespace-pre-wrap text-sm text-muted">{item.description}</p>
+        )}
+        {canEdit && (isSlot || item.kind === "song") && (
+          <div className="print:hidden">
+            {!picking ? (
+              <button className={`${isSlot ? "btn py-1 text-xs" : "btn-ghost -ml-2 text-xs"}`} onClick={() => setPicking(true)}>
+                ♪ {isSlot ? "Pick song" : "Change song"}
+              </button>
+            ) : (
+              <div className="relative max-w-sm">
+                <input autoFocus className="input py-1.5 text-sm" placeholder="Search the song library…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setPicking(false)} />
+                {found.length > 0 && (
+                  <ul className="absolute z-10 mt-1 w-full overflow-hidden rounded-md border border-line bg-white shadow-lg">
+                    {found.map((s) => (
+                      <li key={s.id}>
+                        <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent-soft" onClick={() => pick(s)}>
+                          <span className="flex-1">{s.title} <span className="text-muted">{s.author}</span></span>
+                          {s.default_key && <span className="text-xs text-muted">{s.default_key}</span>}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <button className="mt-1 text-xs text-muted" onClick={() => setPicking(false)}>Cancel</button>
+              </div>
+            )}
+          </div>
         )}
         {item.song_id && (
           <button className="btn-ghost -ml-2 text-xs print:hidden" onClick={() => setListening(!listening)}>

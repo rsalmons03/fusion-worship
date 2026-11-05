@@ -5,7 +5,8 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useLocations, useProfile } from "@/components/ProfileContext";
 import { fmtDate, fmtTime, nextSundayISO, planLabel, todayISO } from "@/lib/format";
-import type { Plan, ServiceType } from "@/lib/types";
+import type { OrderTemplate, Plan, ServiceType } from "@/lib/types";
+import { applyTemplate, loadTemplates } from "@/lib/templates";
 import { addDays, copyItems, copyTimes, describeRepeat, repeatDates, type Repeat } from "@/lib/recur";
 
 type Row = Plan & { service_types: { name: string } | null; plan_items: { count: number }[] };
@@ -31,6 +32,18 @@ export default function PlansPage() {
     copyTimes: true,
   });
   const [progress, setProgress] = useState("");
+  const [templates, setTemplates] = useState<OrderTemplate[]>([]);
+  useEffect(() => {
+    loadTemplates(supabase).then(setTemplates);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Start from the location's default template unless the leader picks something else.
+  const [touchedSource, setTouchedSource] = useState(false);
+  useEffect(() => {
+    if (touchedSource) return;
+    const def =
+      templates.find((t) => t.is_default && t.location_id === (form.location || null)) ?? templates.find((t) => t.is_default && !t.location_id);
+    setForm((f) => ({ ...f, copyFrom: def ? `t:${def.id}` : "" }));
+  }, [templates, form.location, touchedSource]); // eslint-disable-line react-hooks/exhaustive-deps
   const [reload, setReload] = useState(0);
   useEffect(() => {
     if (loc.current) setForm((f) => ({ ...f, location: loc.current! }));
@@ -54,6 +67,7 @@ export default function PlansPage() {
 
   const dates = repeatDates(form.date, form.repeat, form.until);
   const template = recent.find((r) => r.id === form.copyFrom);
+  const orderTemplate = form.copyFrom.startsWith("t:") ? templates.find((t) => t.id === form.copyFrom.slice(2)) : undefined;
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -69,7 +83,7 @@ export default function PlansPage() {
         .insert({
           service_date: date,
           service_type_id: st?.id ?? null,
-          start_time: template?.start_time ?? st?.default_time ?? null,
+          start_time: template?.start_time ?? orderTemplate?.start_time ?? st?.default_time ?? null,
           title: template?.title ?? null,
           ...(loc.locations.length ? { location_id: form.location || null } : {}),
         })
@@ -80,6 +94,10 @@ export default function PlansPage() {
         continue;
       }
       firstId ??= plan.id;
+      if (orderTemplate) {
+        const err = await applyTemplate(supabase, orderTemplate, plan.id, "append");
+        if (err) problems.push(`${date} order: ${err}`);
+      }
       if (template && form.copyItems) {
         const err = await copyItems(supabase, template.id, plan.id);
         if (err) problems.push(`${date} order: ${err}`);
@@ -103,6 +121,7 @@ export default function PlansPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="h1">Plans</h1>
+        {me.isLeader && <Link href="/templates" className="btn-ghost text-sm">Order templates</Link>}
         <div className="ml-auto flex rounded-md border border-line bg-white p-0.5 text-sm">
           <button className={`rounded px-3 py-1 ${!past ? "bg-accent-soft text-accent" : "text-muted"}`} onClick={() => setPast(false)}>Upcoming</button>
           <button className={`rounded px-3 py-1 ${past ? "bg-accent-soft text-accent" : "text-muted"}`} onClick={() => setPast(true)}>Past</button>
@@ -145,12 +164,33 @@ export default function PlansPage() {
             </div>
           )}
           <div className="sm:col-span-2 lg:col-span-2">
-            <label className="label">Copy from an earlier service</label>
-            <select className="input" value={form.copyFrom} onChange={(e) => setForm({ ...form, copyFrom: e.target.value })}>
-              <option value="">— Start blank —</option>
-              {recent.map((r) => <option key={r.id} value={r.id}>{fmtDate(r.service_date)} {r.title ? `· ${r.title}` : ""}</option>)}
+            <label className="label">Start from</label>
+            <select
+              className="input"
+              value={form.copyFrom}
+              onChange={(e) => {
+                setTouchedSource(true);
+                setForm({ ...form, copyFrom: e.target.value });
+              }}
+            >
+              <option value="">— Blank —</option>
+              {templates.length > 0 && (
+                <optgroup label="Templates">
+                  {templates
+                    .filter((t) => !t.location_id || !form.location || t.location_id === form.location)
+                    .map((t) => <option key={t.id} value={`t:${t.id}`}>{t.is_default ? "★ " : ""}{t.name}</option>)}
+                </optgroup>
+              )}
+              <optgroup label="Copy an earlier service">
+                {recent.map((r) => <option key={r.id} value={r.id}>{fmtDate(r.service_date)} {r.title ? `· ${r.title}` : ""}</option>)}
+              </optgroup>
             </select>
-            {form.copyFrom && (
+            {orderTemplate && (
+              <p className="mt-1 text-xs text-muted">
+                {orderTemplate.items.filter((x) => x.kind !== "header").length} items from the template. <Link href="/templates" className="text-accent">Edit templates</Link>
+              </p>
+            )}
+            {template && (
               <div className="mt-2 flex flex-wrap gap-4 text-sm">
                 <label className="flex items-center gap-2"><input type="checkbox" checked={form.copyItems} onChange={(e) => setForm({ ...form, copyItems: e.target.checked })} /> Order of service</label>
                 <label className="flex items-center gap-2"><input type="checkbox" checked={form.copyTimes} onChange={(e) => setForm({ ...form, copyTimes: e.target.checked })} /> Times (services, rehearsal, call time)</label>

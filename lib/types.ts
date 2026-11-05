@@ -84,3 +84,13 @@ export type Blockout = {
 };
 
 export type Tutorial = { part: string; title: string; url: string };
+
+export type TemplateItem = { kind: ItemKind; title: string; duration_min: number | null; description: string | null };
+export type OrderTemplate = {
+  id: string;
+  name: string;
+  location_id: string | null;
+  is_default: boolean;
+  start_time: string | null;
+  items: TemplateItem[];
+};
