@@ -573,7 +573,7 @@ export default function PlanPage() {
             </section>
           )}
 
-          {tab === "Times" && <PlanTimes planId={plan.id} serviceDate={plan.service_date} canEdit={canEdit} />}
+          {tab === "Times" && <PlanTimes planId={plan.id} serviceDate={plan.service_date} canEdit={canEdit} locationId={plan.location_id} />}
 
       {tab === "Notes" && (
         <div className="space-y-4">

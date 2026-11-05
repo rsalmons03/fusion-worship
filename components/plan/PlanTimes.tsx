@@ -1,7 +1,8 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { fmtTime } from "@/lib/format";
+import { fmtDate, fmtTime } from "@/lib/format";
+import { copyTimes } from "@/lib/recur";
 
 type PlanTime = { id: string; kind: "service" | "rehearsal" | "other"; label: string | null; day: string; starts: string | null; ends: string | null };
 const GROUPS: [PlanTime["kind"], string][] = [
@@ -19,11 +20,25 @@ function dayParts(d: string) {
 }
 
 /** Service / rehearsal / call times for a plan. */
-export default function PlanTimes({ planId, serviceDate, canEdit }: { planId: string; serviceDate: string; canEdit: boolean }) {
+export default function PlanTimes({
+  planId,
+  serviceDate,
+  canEdit,
+  locationId,
+}: {
+  planId: string;
+  serviceDate: string;
+  canEdit: boolean;
+  locationId?: string | null;
+}) {
   const supabase = createClient();
   const [times, setTimes] = useState<PlanTime[]>([]);
   const [missing, setMissing] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const [targets, setTargets] = useState<{ id: string; service_date: string; title: string | null; picked: boolean }[]>([]);
+  const [replace, setReplace] = useState(true);
+  const [copyBusy, setCopyBusy] = useState("");
   const [form, setForm] = useState({ kind: "service" as PlanTime["kind"], label: "", day: serviceDate, starts: "09:00", ends: "" });
 
   const load = useCallback(async () => {
@@ -49,6 +64,29 @@ export default function PlanTimes({ planId, serviceDate, canEdit }: { planId: st
     setAdding(false);
     setForm({ ...form, label: "", ends: "" });
     load();
+  }
+
+  async function openCopy() {
+    setCopying(true);
+    let q = supabase.from("plans").select("id,service_date,title").gt("service_date", serviceDate).order("service_date").limit(26);
+    if (locationId) q = q.eq("location_id", locationId);
+    const { data } = await q;
+    setTargets(((data ?? []) as { id: string; service_date: string; title: string | null }[]).map((p) => ({ ...p, picked: true })));
+  }
+
+  async function doCopy() {
+    const picked = targets.filter((t) => t.picked);
+    if (!picked.length) return;
+    const errors: string[] = [];
+    for (const [i, t] of picked.entries()) {
+      setCopyBusy(`Copying ${i + 1} of ${picked.length}…`);
+      const err = await copyTimes(supabase, planId, serviceDate, t.id, t.service_date, replace);
+      if (err) errors.push(`${t.service_date}: ${err}`);
+    }
+    setCopyBusy("");
+    if (errors.length) alert("Some couldn't be copied:\n" + errors.join("\n"));
+    else alert(`Times copied to ${picked.length} service${picked.length === 1 ? "" : "s"}.`);
+    setCopying(false);
   }
 
   async function remove(t: PlanTime) {
@@ -99,6 +137,44 @@ export default function PlanTimes({ planId, serviceDate, canEdit }: { planId: st
         );
       })}
       {!times.length && <p className="text-sm text-muted">No times added yet.</p>}
+      {canEdit && times.length > 0 && !copying && (
+        <button className="btn-secondary w-full" onClick={openCopy}>↻ Copy these times to upcoming services</button>
+      )}
+      {copying && (
+        <div className="card space-y-3">
+          <div className="flex items-center gap-2">
+            <h3 className="h2 flex-1">Copy times to…</h3>
+            <button className="btn-ghost" onClick={() => setCopying(false)}>Cancel</button>
+          </div>
+          <p className="text-sm text-muted">Each time moves with the service date. A rehearsal 4 days before stays 4 days before.</p>
+          {targets.length === 0 ? (
+            <p className="text-sm text-muted">No later services yet. Create them on the Plans page (you can make them repeat).</p>
+          ) : (
+            <>
+              <div className="flex gap-3 text-sm">
+                <button className="text-accent" onClick={() => setTargets(targets.map((t) => ({ ...t, picked: true })))}>Select all</button>
+                <button className="text-muted" onClick={() => setTargets(targets.map((t) => ({ ...t, picked: false })))}>None</button>
+              </div>
+              <ul className="max-h-64 space-y-1 overflow-y-auto">
+                {targets.map((t) => (
+                  <li key={t.id}>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={t.picked} onChange={(e) => setTargets(targets.map((x) => (x.id === t.id ? { ...x, picked: e.target.checked } : x)))} />
+                      {fmtDate(t.service_date, { weekday: "short", year: undefined })} {t.title && <span className="text-muted">· {t.title}</span>}
+                    </label>
+                  </li>
+                ))}
+              </ul>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} /> Replace times those services already have
+              </label>
+              <button className="btn" disabled={!!copyBusy || !targets.some((t) => t.picked)} onClick={doCopy}>
+                {copyBusy || `Copy to ${targets.filter((t) => t.picked).length} services`}
+              </button>
+            </>
+          )}
+        </div>
+      )}
       {canEdit &&
         (adding ? (
           <form onSubmit={add} className="card grid gap-3 sm:grid-cols-2">

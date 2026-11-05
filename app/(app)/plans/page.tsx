@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useLocations, useProfile } from "@/components/ProfileContext";
 import { fmtDate, fmtTime, nextSundayISO, planLabel, todayISO } from "@/lib/format";
 import type { Plan, ServiceType } from "@/lib/types";
+import { addDays, copyItems, copyTimes, describeRepeat, repeatDates, type Repeat } from "@/lib/recur";
 
 type Row = Plan & { service_types: { name: string } | null; plan_items: { count: number }[] };
 
@@ -19,7 +20,18 @@ export default function PlansPage() {
   const [recent, setRecent] = useState<Plan[]>([]);
   const [past, setPast] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ date: nextSundayISO(), type: "", copyFrom: "", location: loc.current ?? loc.locations[0]?.id ?? "" });
+  const [form, setForm] = useState({
+    date: nextSundayISO(),
+    type: "",
+    copyFrom: "",
+    location: loc.current ?? loc.locations[0]?.id ?? "",
+    repeat: "none" as Repeat,
+    until: addDays(nextSundayISO(), 7 * 7),
+    copyItems: true,
+    copyTimes: true,
+  });
+  const [progress, setProgress] = useState("");
+  const [reload, setReload] = useState(0);
   useEffect(() => {
     if (loc.current) setForm((f) => ({ ...f, location: loc.current! }));
   }, [loc.current]);
@@ -30,7 +42,7 @@ export default function PlansPage() {
     if (loc.current) q = q.eq("location_id", loc.current);
     (past ? q.lt("service_date", today).order("service_date", { ascending: false }).limit(50) : q.gte("service_date", today).order("service_date"))
       .then(({ data }) => setRows((data ?? []) as Row[]));
-  }, [past, loc.current]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [past, loc.current, reload]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     supabase.from("plans").select("*").order("service_date", { ascending: false }).limit(20).then(({ data }) => setRecent(data ?? []));
@@ -40,29 +52,51 @@ export default function PlansPage() {
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const dates = repeatDates(form.date, form.repeat, form.until);
+  const template = recent.find((r) => r.id === form.copyFrom);
+
   async function create(e: React.FormEvent) {
     e.preventDefault();
+    if (dates.length > 1 && !confirm(`Create ${dates.length} services: ${describeRepeat(form.date, form.repeat)} until ${fmtDate(form.until, { weekday: undefined })}?`)) return;
     setCreating(true);
     const st = types.find((t) => t.id === form.type);
-    const { data: plan, error } = await supabase
-      .from("plans")
-      .insert({ service_date: form.date, service_type_id: st?.id ?? null, start_time: st?.default_time ?? null, ...(loc.locations.length ? { location_id: form.location || null } : {}) })
-      .select()
-      .single();
-    if (error || !plan) {
-      alert(error?.message ?? "Could not create plan");
-      setCreating(false);
-      return;
-    }
-    if (form.copyFrom) {
-      const { data: items } = await supabase.from("plan_items").select("*").eq("plan_id", form.copyFrom).order("position");
-      if (items?.length) {
-        await supabase.from("plan_items").insert(
-          items.map(({ id: _id, plan_id: _p, ...rest }) => ({ ...rest, plan_id: plan.id }))
-        );
+    const problems: string[] = [];
+    let firstId: string | null = null;
+    for (const [i, date] of dates.entries()) {
+      setProgress(dates.length > 1 ? `Creating ${i + 1} of ${dates.length}…` : "");
+      const { data: plan, error } = await supabase
+        .from("plans")
+        .insert({
+          service_date: date,
+          service_type_id: st?.id ?? null,
+          start_time: template?.start_time ?? st?.default_time ?? null,
+          title: template?.title ?? null,
+          ...(loc.locations.length ? { location_id: form.location || null } : {}),
+        })
+        .select()
+        .single();
+      if (error || !plan) {
+        problems.push(`${date}: ${error?.message ?? "could not create"}`);
+        continue;
+      }
+      firstId ??= plan.id;
+      if (template && form.copyItems) {
+        const err = await copyItems(supabase, template.id, plan.id);
+        if (err) problems.push(`${date} order: ${err}`);
+      }
+      if (template && form.copyTimes) {
+        const err = await copyTimes(supabase, template.id, template.service_date, plan.id, date);
+        if (err && !/plan_times/.test(err)) problems.push(`${date} times: ${err}`);
       }
     }
-    router.push(`/plans/${plan.id}`);
+    setCreating(false);
+    setProgress("");
+    if (problems.length) alert("Some services had problems:\n" + problems.join("\n"));
+    if (dates.length === 1 && firstId) router.push(`/plans/${firstId}`);
+    else {
+      setReload((n) => n + 1);
+      setPast(false);
+    }
   }
 
   return (
@@ -76,7 +110,7 @@ export default function PlansPage() {
       </div>
 
       {me.isLeader && (
-        <form onSubmit={create} className="card grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_auto] lg:items-end">
+        <form onSubmit={create} className="card grid gap-3 sm:grid-cols-2 lg:grid-cols-4 lg:items-start">
           {loc.locations.length > 0 && (
             <div>
               <label className="label">Location</label>
@@ -96,13 +130,44 @@ export default function PlansPage() {
             </select>
           </div>
           <div>
-            <label className="label">Copy order of service from</label>
-            <select className="input" value={form.copyFrom} onChange={(e) => setForm({ ...form, copyFrom: e.target.value })}>
-              <option value="">— Blank plan —</option>
-              {recent.map((r) => <option key={r.id} value={r.id}>{fmtDate(r.service_date)} {r.title ? `· ${r.title}` : ""}</option>)}
+            <label className="label">Repeats</label>
+            <select className="input" value={form.repeat} onChange={(e) => setForm({ ...form, repeat: e.target.value as Repeat })}>
+              <option value="none">Doesn&apos;t repeat</option>
+              <option value="weekly">Every week</option>
+              <option value="biweekly">Every 2 weeks</option>
+              <option value="monthly">Every month (same weekday)</option>
             </select>
           </div>
-          <button className="btn" disabled={creating}>{creating ? "Creating…" : "New plan"}</button>
+          {form.repeat !== "none" && (
+            <div>
+              <label className="label">Until</label>
+              <input type="date" className="input" min={form.date} value={form.until} onChange={(e) => setForm({ ...form, until: e.target.value })} />
+            </div>
+          )}
+          <div className="sm:col-span-2 lg:col-span-2">
+            <label className="label">Copy from an earlier service</label>
+            <select className="input" value={form.copyFrom} onChange={(e) => setForm({ ...form, copyFrom: e.target.value })}>
+              <option value="">— Start blank —</option>
+              {recent.map((r) => <option key={r.id} value={r.id}>{fmtDate(r.service_date)} {r.title ? `· ${r.title}` : ""}</option>)}
+            </select>
+            {form.copyFrom && (
+              <div className="mt-2 flex flex-wrap gap-4 text-sm">
+                <label className="flex items-center gap-2"><input type="checkbox" checked={form.copyItems} onChange={(e) => setForm({ ...form, copyItems: e.target.checked })} /> Order of service</label>
+                <label className="flex items-center gap-2"><input type="checkbox" checked={form.copyTimes} onChange={(e) => setForm({ ...form, copyTimes: e.target.checked })} /> Times (services, rehearsal, call time)</label>
+              </div>
+            )}
+          </div>
+          <div className="flex flex-col justify-end gap-1 sm:col-span-2 lg:col-span-4">
+            {dates.length > 1 && (
+              <p className="text-sm text-muted">
+                {describeRepeat(form.date, form.repeat)} → <b>{dates.length} services</b>: {dates.slice(0, 4).map((d) => fmtDate(d, { weekday: undefined, year: undefined })).join(", ")}
+                {dates.length > 4 && `, … ${fmtDate(dates[dates.length - 1], { weekday: undefined, year: undefined })}`}. People aren&apos;t copied.
+              </p>
+            )}
+            <button className="btn self-start" disabled={creating}>
+              {creating ? progress || "Creating…" : dates.length > 1 ? `Create ${dates.length} services` : "New plan"}
+            </button>
+          </div>
         </form>
       )}
 
