@@ -94,7 +94,11 @@ export default function PeoplePage() {
     });
     const body = await res.json().catch(() => ({}));
     setBusy(false);
-    if (!res.ok) return setMsg(body.error ?? "Could not add person");
+    if (!res.ok) {
+      const err = body.error ?? `Could not add person (${res.status})`;
+      setMsg(err);
+      return alert(`Couldn't add ${form.name || form.email}:\n\n${err}`);
+    }
     setMsg(
       !body.hasEmail
         ? `Added ${form.name}. They can be scheduled now. Add an email and password later (Edit) if they need to sign in.`

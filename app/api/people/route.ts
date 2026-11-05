@@ -24,20 +24,33 @@ export async function POST(req: Request) {
   if (!["admin", "leader", "member"].includes(role)) return NextResponse.json({ error: "Bad role" }, { status: 400 });
   if (location_id && !UUID_RE.test(String(location_id))) return NextResponse.json({ error: "Bad location" }, { status: 400 });
 
-  const admin = createAdminClient();
+  let admin;
+  try {
+    admin = createAdminClient();
+  } catch {
+    return NextResponse.json(
+      { error: "The server's secret Supabase key isn't set up. In Cloudflare → fusion-worshipppp → Settings → Variables and Secrets, add SUPABASE_SERVICE_ROLE_KEY (type Secret), then Deploy." },
+      { status: 500 }
+    );
+  }
   const { data: existing } = hasEmail ? await admin.from("profiles").select("id").ilike("email", cleanEmail).maybeSingle() : { data: null };
   let id = existing?.id as string | undefined;
   if (id && password) {
     const { error } = await admin.auth.admin.updateUserById(id, { password: pw });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   } else if (!id) {
-    const { data, error } = await admin.auth.admin.createUser({
-      email: cleanEmail,
-      password: pw,
-      email_confirm: true,
-      user_metadata: { full_name: cleanName },
-    });
-    if (error || !data.user) return NextResponse.json({ error: error?.message ?? "Could not create user" }, { status: 500 });
+    const create = (address: string) =>
+      admin.auth.admin.createUser({ email: address, password: pw, email_confirm: true, user_metadata: { full_name: cleanName } });
+    let { data, error } = await create(cleanEmail);
+    // Some Supabase setups refuse made-up domains: fall back to one on the church's own domain (never emailed).
+    if (error && !hasEmail) ({ data, error } = await create(`no-email-${crypto.randomUUID().slice(0, 12)}@fusionchurchservices.cc`));
+    if (error || !data.user) {
+      const msg = error?.message ?? "Could not create user";
+      return NextResponse.json(
+        { error: /invalid api key|jwt|apikey/i.test(msg) ? "The server's secret Supabase key (SUPABASE_SERVICE_ROLE_KEY) in Cloudflare is wrong or missing. " + msg : msg },
+        { status: 500 }
+      );
+    }
     id = data.user.id;
   }
   const patch: Record<string, string | null> = { role };
