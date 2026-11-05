@@ -210,6 +210,30 @@ export default function SongPage() {
           </div>
         </div>
       ) : (
+        <>
+        {/* On phones the extras sit below the chart, so offer shortcuts to them. */}
+        {!isNew && (
+          <div className="-mt-2 mb-4 flex flex-wrap gap-2 lg:hidden print:hidden">
+            {[
+              ["song-tutorials", `🎓 Tutorials${song.tutorials?.length ? ` (${song.tutorials.length})` : ""}`],
+              ["song-files", "📁 Files & audio"],
+              ["song-listen", "🔗 Listen link"],
+            ].map(([id, label]) => (
+              <button
+                key={id}
+                className="rounded-full border border-line bg-white px-3 py-1.5 text-sm font-semibold"
+                onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              >
+                {label}
+              </button>
+            ))}
+            {song.multitracks_url && (
+              <a href={song.multitracks_url} target="_blank" rel="noreferrer" className="rounded-full border border-line bg-white px-3 py-1.5 text-sm font-semibold">
+                MultiTracks ↗
+              </a>
+            )}
+          </div>
+        )}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
           <div className="card min-w-0">
             <div className="mb-4 flex flex-wrap items-center gap-2 print:hidden">
@@ -241,13 +265,13 @@ export default function SongPage() {
               <a href={song.multitracks_url} target="_blank" rel="noreferrer" className="btn w-full">Open in MultiTracks</a>
             )}
             {((song.tutorials?.length ?? 0) > 0 || (canEdit && !isNew)) && (
-              <div className="card">
+              <div id="song-tutorials" className="card scroll-mt-24">
                 <div className="label mb-2">Tutorials</div>
                 <Tutorials items={song.tutorials ?? []} onSave={canEdit ? saveTutorials : undefined} />
               </div>
             )}
             {!isNew && (
-              <div className="card">
+              <div id="song-listen" className="card scroll-mt-24">
                 <div className="label mb-2">Listen</div>
                 <SongListen songId={params.id} referenceUrl={song.reference_url} audio={false} />
                 <p className="mt-2 text-xs text-muted">Uploaded MP3s play in the player bar at the bottom of the screen.</p>
@@ -268,6 +292,7 @@ export default function SongPage() {
             </div>
           </aside>
         </div>
+        </>
       )}
     </div>
   );
