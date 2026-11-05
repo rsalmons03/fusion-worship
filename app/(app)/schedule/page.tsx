@@ -135,10 +135,10 @@ export default function SchedulePage() {
   const existingBookings = (): Booking[] =>
     assignments.map((a) => ({ planId: a.plan_id, positionId: a.position_id, profileId: a.profile_id, date: planDate(a.plan_id) }));
 
-  function autoFill(onlyPosition?: string) {
+  function autoFill(only?: string[]) {
     const slots = plans.flatMap((pl) =>
       teamPositions
-        .filter((pos) => !onlyPosition || pos.id === onlyPosition)
+        .filter((pos) => !only || only.includes(pos.id))
         .flatMap((pos) => {
           const open = (pos.needed ?? 1) - at(pl.id, pos.id).length - prop(pl.id, pos.id).length;
           return Array.from({ length: Math.max(0, open) }, () => ({ planId: pl.id, date: pl.service_date, positionId: pos.id }));
@@ -225,6 +225,76 @@ export default function SchedulePage() {
     const everyone = new Set([...teamPositions.flatMap((p) => rosterFor(p.id)), ...m.keys()]);
     return [...everyone].map((pid) => ({ pid, n: m.get(pid) ?? 0 })).sort((a, b) => b.n - a.n || name(a.pid).localeCompare(name(b.pid)));
   }, [assignments, proposed, teamId, positions, roster, people]); // eslint-disable-line react-hooks/exhaustive-deps
+
+
+  // Vocal positions (lead, backup, plain vocals) share one block in the grid.
+  const isVocal = (p: Position) => /vocal|bgv|vox|singer/i.test(p.name);
+  const shortLabel = (p: Position) => (/lead/i.test(p.name) ? "Lead" : /backup|bgv|background/i.test(p.name) ? "Backup" : p.name);
+  const groups: { key: string; label: string; positions: Position[] }[] = [];
+  for (const pos of teamPositions) {
+    if (isVocal(pos)) {
+      if (groups.some((g) => g.key === "vocals")) continue;
+      const vocals = teamPositions.filter(isVocal).sort((a, b) => Number(/lead/i.test(b.name)) - Number(/lead/i.test(a.name)));
+      groups.push({ key: "vocals", label: vocals.length > 1 ? "Vocals" : vocals[0].name, positions: vocals });
+    } else groups.push({ key: pos.id, label: pos.name, positions: [pos] });
+  }
+
+  function renderCell(pl: Plan, pos: Position) {
+    const here = at(pl.id, pos.id);
+    const sug = prop(pl.id, pos.id);
+    const open = cell?.planId === pl.id && cell.positionId === pos.id;
+    const players = rosterFor(pos.id);
+    return (
+      <div className="space-y-1">
+        {here.map((a) => (
+          <div key={a.id} className="group flex items-center gap-1.5">
+            <Avatar name={name(a.profile_id)} status={a.status} size="sm" />
+            <span className="min-w-0 flex-1 truncate text-[13px]">{name(a.profile_id)}</span>
+            <button className="text-xs text-muted opacity-0 hover:text-bad group-hover:opacity-100" onClick={() => removeOne(a.id)} aria-label="Remove">✕</button>
+          </div>
+        ))}
+        {sug.map((b) => (
+          <div key={b.profileId} className="flex items-center gap-1.5 rounded border border-dashed border-accent bg-accent-soft/50 px-1 py-0.5">
+            <Avatar name={name(b.profileId)} size="sm" />
+            <span className="min-w-0 flex-1 truncate text-[13px]">{name(b.profileId)}</span>
+            <button className="text-xs text-muted hover:text-bad" onClick={() => setProposed(proposed.filter((x) => x !== b))} aria-label="Remove suggestion">✕</button>
+          </div>
+        ))}
+        {!open ? (
+          <button
+            className={`w-full rounded px-1 py-0.5 text-left text-[12px] ${here.length || sug.length ? "text-muted opacity-60 hover:opacity-100" : "italic text-stone-400 hover:bg-stone-50"}`}
+            onClick={() => setCell({ planId: pl.id, positionId: pos.id })}
+          >
+            {(() => {
+              const left = (pos.needed ?? 1) - here.length - sug.length;
+              if (!here.length && !sug.length) return (pos.needed ?? 1) > 1 ? `Needs ${pos.needed}` : "Needs someone";
+              return left > 0 ? `+ ${left} more needed` : "+ add";
+            })()}
+          </button>
+        ) : (
+          <select
+            autoFocus
+            className="w-full rounded border border-accent bg-white px-1 py-1 text-[12px]"
+            value=""
+            onBlur={() => setCell(null)}
+            onChange={(e) => e.target.value && bookOne(pl.id, pos.id, e.target.value)}
+          >
+            <option value="">Choose…</option>
+            <optgroup label={`Plays ${pos.name}`}>
+              {people.filter((p) => players.includes(p.id)).map((p) => (
+                <option key={p.id} value={p.id}>{p.verified ? "✓ " : ""}{displayName(p)}{isBlocked(p.id, pl.service_date) ? " (blocked out)" : ""}</option>
+              ))}
+            </optgroup>
+            <optgroup label="Everyone else">
+              {people.filter((p) => !players.includes(p.id)).map((p) => (
+                <option key={p.id} value={p.id}>{displayName(p)}{isBlocked(p.id, pl.service_date) ? " (blocked out)" : ""}</option>
+              ))}
+            </optgroup>
+          </select>
+        )}
+      </div>
+    );
+  }
 
   if (!me.isLeader) return <p className="text-muted">Only leaders can schedule.</p>;
 
@@ -354,92 +424,58 @@ export default function SchedulePage() {
                 </tr>
               </thead>
               <tbody>
-                {teamPositions.map((pos) => {
-                  const players = rosterFor(pos.id);
-                  return (
-                    <tr key={pos.id} className="border-b border-line align-top last:border-0">
-                      <th className="sticky left-0 z-10 bg-stone-50 px-3 py-2 text-left font-normal">
-                        <div className="text-xs font-bold uppercase tracking-wide">{pos.name}</div>
-                        <div className="text-[11px] text-muted">
-                          {players.length} {players.length === 1 ? "person" : "people"}
+                {groups.map((g) => (
+                  <tr key={g.key} className="border-b border-line align-top last:border-0">
+                    <th className="sticky left-0 z-10 bg-stone-50 px-3 py-2 text-left font-normal">
+                      <div className="text-xs font-bold uppercase tracking-wide">{g.label}</div>
+                      {g.positions.map((pos) => (
+                        <div key={pos.id} className="text-[11px] text-muted">
+                          {g.positions.length > 1 && <b className="font-semibold">{shortLabel(pos)}: </b>}
+                          {rosterFor(pos.id).length} {rosterFor(pos.id).length === 1 ? "person" : "people"}
                           {(pos.needed ?? 1) > 1 && ` · needs ${pos.needed}`}
-                          {pos.can_double && " · can double up"}
+                          {g.positions.length === 1 && pos.can_double && " · can double up"}
                         </div>
-                        <div className="mt-1 flex flex-col items-start gap-0.5">
-                          <button className="text-[11px] font-semibold text-accent hover:underline" onClick={() => autoFill(pos.id)}>⚖ Fill fairly</button>
-                          <select
-                            className="max-w-[10rem] rounded border border-line bg-white px-1 py-0.5 text-[11px]"
-                            value=""
-                            onChange={(e) => e.target.value && bookEveryWeek(pos.id, e.target.value)}
-                          >
-                            <option value="">Book as often as allowed…</option>
-                            {people
-                              .filter((p) => players.includes(p.id))
-                              .map((p) => <option key={p.id} value={p.id}>{p.verified ? "✓ " : ""}{displayName(p)}</option>)}
-                          </select>
-                        </div>
-                      </th>
-                      {columns.map(({ date, plan: pl }) => {
-                        if (!pl) return <td key={`missing-${date}`} className="border-l border-line bg-stone-50 px-2 py-1.5 text-[11px] italic text-stone-400">No service yet</td>;
-                        const here = at(pl.id, pos.id);
-                        const sug = prop(pl.id, pos.id);
-                        const open = cell?.planId === pl.id && cell.positionId === pos.id;
-                        return (
-                          <td key={pl.id} className="border-l border-line px-2 py-1.5">
-                            <div className="space-y-1">
-                              {here.map((a) => (
-                                <div key={a.id} className="group flex items-center gap-1.5">
-                                  <Avatar name={name(a.profile_id)} status={a.status} size="sm" />
-                                  <span className="min-w-0 flex-1 truncate text-[13px]">{name(a.profile_id)}</span>
-                                  <button className="text-xs text-muted opacity-0 hover:text-bad group-hover:opacity-100" onClick={() => removeOne(a.id)} aria-label="Remove">✕</button>
-                                </div>
-                              ))}
-                              {sug.map((b) => (
-                                <div key={b.profileId} className="flex items-center gap-1.5 rounded border border-dashed border-accent bg-accent-soft/50 px-1 py-0.5">
-                                  <Avatar name={name(b.profileId)} size="sm" />
-                                  <span className="min-w-0 flex-1 truncate text-[13px]">{name(b.profileId)}</span>
-                                  <button className="text-xs text-muted hover:text-bad" onClick={() => setProposed(proposed.filter((x) => x !== b))} aria-label="Remove suggestion">✕</button>
-                                </div>
-                              ))}
-                              {!open ? (
-                                <button
-                                  className={`w-full rounded px-1 py-0.5 text-left text-[12px] ${here.length || sug.length ? "text-muted opacity-60 hover:opacity-100" : "italic text-stone-400 hover:bg-stone-50"}`}
-                                  onClick={() => setCell({ planId: pl.id, positionId: pos.id })}
-                                >
-                                  {(() => {
-                                    const left = (pos.needed ?? 1) - here.length - sug.length;
-                                    if (!here.length && !sug.length) return (pos.needed ?? 1) > 1 ? `Needs ${pos.needed}` : "Needs someone";
-                                    return left > 0 ? `+ ${left} more needed` : "+ add";
-                                  })()}
-                                </button>
-                              ) : (
-                                <select
-                                  autoFocus
-                                  className="w-full rounded border border-accent bg-white px-1 py-1 text-[12px]"
-                                  value=""
-                                  onBlur={() => setCell(null)}
-                                  onChange={(e) => e.target.value && bookOne(pl.id, pos.id, e.target.value)}
-                                >
-                                  <option value="">Choose…</option>
-                                  <optgroup label={`Plays ${pos.name}`}>
-                                    {people.filter((p) => players.includes(p.id)).map((p) => (
-                                      <option key={p.id} value={p.id}>{p.verified ? "✓ " : ""}{displayName(p)}{isBlocked(p.id, pl.service_date) ? " (blocked out)" : ""}</option>
-                                    ))}
-                                  </optgroup>
-                                  <optgroup label="Everyone else">
-                                    {people.filter((p) => !players.includes(p.id)).map((p) => (
-                                      <option key={p.id} value={p.id}>{displayName(p)}{isBlocked(p.id, pl.service_date) ? " (blocked out)" : ""}</option>
-                                    ))}
-                                  </optgroup>
-                                </select>
-                              )}
-                            </div>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
+                      ))}
+                      <div className="mt-1 flex flex-col items-start gap-0.5">
+                        <button className="text-[11px] font-semibold text-accent hover:underline" onClick={() => autoFill(g.positions.map((p) => p.id))}>⚖ Fill fairly</button>
+                        <select
+                          className="max-w-[10rem] rounded border border-line bg-white px-1 py-0.5 text-[11px]"
+                          value=""
+                          onChange={(e) => {
+                            if (!e.target.value) return;
+                            const [posId, pid] = e.target.value.split("|");
+                            bookEveryWeek(posId, pid);
+                          }}
+                        >
+                          <option value="">Book as often as allowed…</option>
+                          {g.positions.map((pos) => (
+                            <optgroup key={pos.id} label={pos.name}>
+                              {people
+                                .filter((p) => rosterFor(pos.id).includes(p.id))
+                                .map((p) => <option key={p.id} value={`${pos.id}|${p.id}`}>{p.verified ? "✓ " : ""}{displayName(p)}</option>)}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </div>
+                    </th>
+                    {columns.map(({ date, plan: pl }) =>
+                      !pl ? (
+                        <td key={`missing-${date}`} className="border-l border-line bg-stone-50 px-2 py-1.5 text-[11px] italic text-stone-400">No service yet</td>
+                      ) : (
+                        <td key={pl.id} className="border-l border-line px-2 py-1.5">
+                          <div className={g.positions.length > 1 ? "space-y-2" : ""}>
+                            {g.positions.map((pos) => (
+                              <div key={pos.id}>
+                                {g.positions.length > 1 && <div className="text-[10px] font-bold uppercase tracking-wide text-muted">{shortLabel(pos)}</div>}
+                                {renderCell(pl, pos)}
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      )
+                    )}
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
