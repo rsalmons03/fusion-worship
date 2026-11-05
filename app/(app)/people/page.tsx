@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useLocations, useProfile } from "@/components/ProfileContext";
+import Verified from "@/components/Verified";
 import type { Profile, Role } from "@/lib/types";
 
 const ROLES: { value: Role; label: string; hint: string }[] = [
@@ -21,7 +22,7 @@ export default function PeoplePage() {
   const [msg, setMsg] = useState("");
 
   const load = useCallback(async () => {
-    const { data } = await supabase.from("profiles").select("id,email,full_name,phone,role,location_id").order("full_name");
+    const { data } = await supabase.from("profiles").select("*").order("full_name");
     setPeople((data ?? []) as Profile[]);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -34,6 +35,12 @@ export default function PeoplePage() {
     if (p.id === me.id && role !== "admin" && !confirm("Remove your own admin access?")) return;
     const { error } = await supabase.from("profiles").update({ role }).eq("id", p.id);
     if (error) alert(error.message);
+    load();
+  }
+
+  async function toggleVerified(p: Profile) {
+    const { error } = await supabase.from("profiles").update({ verified: !p.verified }).eq("id", p.id);
+    if (error) return alert(/verified/.test(error.message) ? "This needs the database update 008_verified.sql. " + error.message : error.message);
     load();
   }
 
@@ -123,7 +130,17 @@ export default function PeoplePage() {
           <tbody className="divide-y divide-line">
             {people.map((p) => (
               <tr key={p.id}>
-                <td className="px-4 py-2 font-medium">{p.full_name || "—"}</td>
+                <td className="px-4 py-2 font-medium">
+                  <span className="flex items-center gap-1">
+                    {p.full_name || "—"} <Verified on={p.verified} />
+                  </span>
+                  <button
+                    className={`mt-1 rounded-sm px-1.5 py-0.5 text-[10px] font-bold uppercase ${p.verified ? "bg-[#1d9bf0] text-white" : "border border-line text-muted"}`}
+                    onClick={() => toggleVerified(p)}
+                  >
+                    {p.verified ? "✓ Confirmed member" : "Mark confirmed"}
+                  </button>
+                </td>
                 <td className="px-4 py-2 text-muted">{p.email}</td>
                 <td className="hidden px-4 py-2 text-muted sm:table-cell">{p.phone}</td>
                 <td className="px-4 py-2">

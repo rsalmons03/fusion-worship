@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useLocations, useProfile } from "@/components/ProfileContext";
 import StatusChip from "@/components/StatusChip";
+import Verified from "@/components/Verified";
 import { fmtDate, fmtTime, planLabel, todayISO } from "@/lib/format";
 import type { AssignmentStatus, Plan } from "@/lib/types";
 
@@ -12,7 +13,7 @@ type Row = {
   status: AssignmentStatus;
   responded_at: string | null;
   profile_id: string;
-  profiles: { full_name: string; email: string | null; phone: string | null } | null;
+  profiles: { full_name: string; email: string | null; phone: string | null; verified?: boolean } | null;
   positions: { name: string; teams: { name: string } | null } | null;
 };
 type PlanRow = Plan & { assignments: Row[] };
@@ -31,7 +32,7 @@ export default function ConfirmationsPage() {
   const load = useCallback(async () => {
     let q = supabase
       .from("plans")
-      .select("*, assignments(id, status, responded_at, profile_id, profiles(full_name, email, phone), positions(name, teams(name)))")
+      .select("*, assignments(id, status, responded_at, profile_id, profiles(*), positions(name, teams(name)))")
       .gte("service_date", todayISO())
       .order("service_date")
       .limit(30);
@@ -122,7 +123,7 @@ export default function ConfirmationsPage() {
                 {rows.map((a) => (
                   <li key={a.id} className="flex flex-wrap items-center gap-2 py-2">
                     <div className="min-w-0 flex-1">
-                      <span className="font-medium">{a.profiles?.full_name || a.profiles?.email}</span>
+                      <span className="font-medium">{a.profiles?.full_name || a.profiles?.email}</span> <Verified on={a.profiles?.verified} />
                       <span className="text-muted"> · {a.positions?.name}{a.positions?.teams?.name ? ` (${a.positions.teams.name})` : ""}</span>
                       {a.profiles?.phone && (
                         <a href={`sms:${a.profiles.phone}`} className="ml-2 text-xs text-accent">Text</a>

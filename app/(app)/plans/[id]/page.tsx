@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useLocations, useProfile } from "@/components/ProfileContext";
 import StatusChip from "@/components/StatusChip";
+import Verified from "@/components/Verified";
 import SongListen from "@/components/SongListen";
 import PlanTimes from "@/components/plan/PlanTimes";
 import PlanFiles from "@/components/plan/PlanFiles";
@@ -74,7 +75,7 @@ export default function PlanPage() {
         supabase.from("teams").select("*").order("sort"),
         supabase.from("positions").select("*").order("sort"),
         supabase.from("position_members").select("*"),
-        supabase.from("profiles").select("id,email,full_name,phone,role,location_id").neq("role", "pending").order("full_name"),
+        supabase.from("profiles").select("*").neq("role", "pending").order("full_name"),
         supabase.from("blockouts").select("*").lte("starts_on", p.service_date).gte("ends_on", p.service_date),
       ]);
       setSongs((s.data ?? []) as SongLite[]);
@@ -398,13 +399,13 @@ export default function PlanPage() {
                   const here = assignments.filter((a) => a.position_id === pos.id);
                   const rosterIds = new Set(roster.filter((r) => r.position_id === pos.id).map((r) => r.profile_id));
                   const taken = new Set(here.map((a) => a.profile_id));
-                  const choices = people.filter((p) => !taken.has(p.id));
+                  const choices = people.filter((p) => !taken.has(p.id)).sort((x, y) => Number(!!y.verified) - Number(!!x.verified));
                   return (
                     <li key={pos.id} className="text-sm">
                       <div className="text-xs font-medium uppercase tracking-wide text-muted">{pos.name}</div>
                       {here.map((a) => (
                         <div key={a.id} className="flex items-center gap-2 py-0.5">
-                          <span className="flex-1">{personName(a.profile_id)}{blocked.has(a.profile_id) && <span className="ml-1 text-xs text-bad">(blocked out)</span>}</span>
+                          <span className="flex-1">{personName(a.profile_id)} <Verified on={people.find((x) => x.id === a.profile_id)?.verified} />{blocked.has(a.profile_id) && <span className="ml-1 text-xs text-bad">(blocked out)</span>}</span>
                           <StatusChip status={a.status} />
                           {canEdit && <button className="btn-ghost px-1 print:hidden" onClick={() => unassign(a.id)} aria-label="Remove">✕</button>}
                         </div>
@@ -418,12 +419,12 @@ export default function PlanPage() {
                           <option value="">+ Schedule someone…</option>
                           <optgroup label="On this roster">
                             {choices.filter((p) => rosterIds.has(p.id)).map((p) => (
-                              <option key={p.id} value={p.id}>{p.full_name || p.email}{blocked.has(p.id) ? " — blocked out" : ""}</option>
+                              <option key={p.id} value={p.id}>{p.verified ? "✓ " : ""}{p.full_name || p.email}{blocked.has(p.id) ? " — blocked out" : ""}</option>
                             ))}
                           </optgroup>
                           <optgroup label="Everyone else">
                             {choices.filter((p) => !rosterIds.has(p.id)).map((p) => (
-                              <option key={p.id} value={p.id}>{p.full_name || p.email}{blocked.has(p.id) ? " — blocked out" : ""}</option>
+                              <option key={p.id} value={p.id}>{p.verified ? "✓ " : ""}{p.full_name || p.email}{blocked.has(p.id) ? " — blocked out" : ""}</option>
                             ))}
                           </optgroup>
                         </select>

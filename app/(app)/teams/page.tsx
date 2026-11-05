@@ -23,7 +23,7 @@ export default function TeamsPage() {
       supabase.from("teams").select("*").order("sort"),
       supabase.from("positions").select("*").order("sort"),
       supabase.from("position_members").select("*"),
-      supabase.from("profiles").select("id,email,full_name,phone,role,location_id").neq("role", "pending").order("full_name"),
+      supabase.from("profiles").select("*").neq("role", "pending").order("full_name"),
     ]);
     setTeams(t.data ?? []);
     setPositions(p.data ?? []);
@@ -163,7 +163,7 @@ export default function TeamsPage() {
                               onClick={() => toggle(p.id, person.id, on)}
                               className={`rounded-full border px-2.5 py-1 text-xs ${on ? "border-accent bg-accent text-white" : "border-line bg-white hover:border-accent"}`}
                             >
-                              {person.full_name || person.email}
+                              {person.verified ? "✓ " : ""}{person.full_name || person.email}
                             </button>
                           );
                         })}

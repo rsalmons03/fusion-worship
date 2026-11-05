@@ -7,6 +7,8 @@ export type Profile = {
   phone: string | null;
   role: Role;
   location_id: string | null;
+  /** Admin-given "confirmed member" check: reliable to show up. */
+  verified?: boolean;
 };
 
 export type Location = { id: string; name: string; sort: number };
