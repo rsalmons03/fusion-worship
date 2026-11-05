@@ -83,7 +83,7 @@ export default function LiveView() {
           <button
             key={it.id}
             onClick={() => setIdx(i)}
-            className={`shrink-0 rounded-full px-3 py-1 ${i === idx ? "bg-violet-600 text-white" : "opacity-70 hover:opacity-100"}`}
+            className={`shrink-0 rounded-full px-3 py-1 ${i === idx ? "bg-accent text-white" : "opacity-70 hover:opacity-100"}`}
           >
             {i + 1}. {it.title}
           </button>
@@ -99,7 +99,7 @@ export default function LiveView() {
             {item.kind === "song" && shownKey && (
               <span className="flex items-center gap-1 text-sm">
                 <button className="rounded px-2 opacity-70 hover:opacity-100" onClick={() => setShift({ ...shift, [item.id]: extra - 1 })}>−</button>
-                <span className="rounded bg-violet-600 px-2 py-0.5 font-mono font-semibold text-white">{shownKey}</span>
+                <span className="rounded bg-accent px-2 py-0.5 font-mono font-semibold text-white">{shownKey}</span>
                 <button className="rounded px-2 opacity-70 hover:opacity-100" onClick={() => setShift({ ...shift, [item.id]: extra + 1 })}>+</button>
               </span>
             )}
@@ -128,7 +128,7 @@ export default function LiveView() {
 
 function Btn({ children, onClick, active }: { children: React.ReactNode; onClick: () => void; active?: boolean }) {
   return (
-    <button onClick={onClick} className={`rounded px-2 py-1 ${active ? "bg-violet-600 text-white" : "opacity-70 hover:opacity-100"}`}>
+    <button onClick={onClick} className={`rounded px-2 py-1 ${active ? "bg-accent text-white" : "opacity-70 hover:opacity-100"}`}>
       {children}
     </button>
   );

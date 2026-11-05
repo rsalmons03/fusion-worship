@@ -28,12 +28,10 @@ export default function LoginPage() {
   return (
     <main className="grid min-h-screen place-items-center px-4">
       <div className="card w-full max-w-sm p-6">
-        <div className="mb-6 flex items-center gap-3">
-          <span className="grid h-10 w-10 place-items-center rounded-xl bg-accent text-lg text-white">♪</span>
-          <div>
-            <h1 className="font-semibold">{CHURCH_NAME}</h1>
-            <p className="text-sm text-muted">Worship planning</p>
-          </div>
+        <div className="mb-6 text-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt={CHURCH_NAME} className="mx-auto h-14 w-auto" />
+          <p className="mt-3 font-display text-xs font-bold uppercase tracking-[0.2em] text-accent">Worship Planning</p>
         </div>
         {state === "sent" ? (
           <div className="space-y-2 text-sm">

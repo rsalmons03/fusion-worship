@@ -30,9 +30,10 @@ export default function Nav() {
   return (
     <header className="sticky top-0 z-20 border-b border-line bg-white/95 backdrop-blur print:hidden">
       <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
-        <Link href="/" className="flex items-center gap-2 font-semibold">
-          <span className="grid h-8 w-8 place-items-center rounded-lg bg-accent text-white">♪</span>
-          <span className="truncate">{CHURCH_NAME}</span>
+        <Link href="/" className="flex shrink-0 items-center gap-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt={CHURCH_NAME} className="h-8 w-auto" />
+          <span className="hidden border-l border-line pl-2 font-display text-xs font-bold uppercase tracking-widest text-muted sm:inline">Worship</span>
         </Link>
         <nav className="ml-4 hidden gap-1 md:flex">
           {links.map((l) => (

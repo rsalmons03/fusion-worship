@@ -5,15 +5,16 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["Inter", "system-ui", "sans-serif"],
+        sans: ["Lato", "system-ui", "sans-serif"],
+        display: ["Montserrat", "system-ui", "sans-serif"],
         mono: ["'IBM Plex Mono'", "ui-monospace", "monospace"],
       },
       colors: {
-        ink: "#1c1917",
-        paper: "#faf8f5",
-        line: "#e7e2da",
-        muted: "#78716c",
-        accent: { DEFAULT: "#6d28d9", soft: "#ede9fe" },
+        ink: "#111111",
+        paper: "#f6f6f4",
+        line: "#e4e4e0",
+        muted: "#6b6b66",
+        accent: { DEFAULT: "#df6437", dark: "#c0502a", soft: "#fbe8df" },
         ok: "#15803d",
         warn: "#b45309",
         bad: "#b91c1c",
