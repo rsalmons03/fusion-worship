@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useLocations, useProfile } from "@/components/ProfileContext";
 import StatusChip from "@/components/StatusChip";
 import Verified from "@/components/Verified";
+import Avatar, { displayName } from "@/components/Avatar";
 import SongListen from "@/components/SongListen";
 import PlanTimes from "@/components/plan/PlanTimes";
 import PlanFiles from "@/components/plan/PlanFiles";
@@ -52,6 +53,9 @@ export default function PlanPage() {
   type Tab = (typeof TABS)[number];
   const [tab, setTab] = useState<Tab>("Order");
   const [showDetails, setShowDetails] = useState(false);
+  const [editOrder, setEditOrder] = useState(false);
+  const [addingTo, setAddingTo] = useState<string | null>(null);
+  const [planTimes, setPlanTimes] = useState<{ id: string; kind: string; label: string | null; day: string; starts: string | null; ends: string | null }[]>([]);
   const [neighbors, setNeighbors] = useState<{ prev: string | null; next: string | null }>({ prev: null, next: null });
 
   const loadItems = useCallback(async () => {
@@ -89,6 +93,10 @@ export default function PlanPage() {
     loadItems();
     loadAssignments();
   }, [planId, loadItems, loadAssignments]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    supabase.from("plan_times").select("*").eq("plan_id", planId).order("day").order("starts").then(({ data, error }) => !error && setPlanTimes(data ?? []));
+  }, [planId, tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Previous / next service (same location) for the ‹ › arrows.
   useEffect(() => {
@@ -181,10 +189,7 @@ export default function PlanPage() {
   const totalMin = items.reduce((n, x) => n + (x.duration_min ?? 0), 0);
 
   // ── Scheduling ──
-  const personName = (id: string) => {
-    const p = people.find((x) => x.id === id);
-    return p?.full_name || p?.email || "Unknown";
-  };
+  const personName = (id: string) => displayName(people.find((x) => x.id === id));
   const blocked = new Set(blockouts.map((b) => b.profile_id));
 
   async function assign(positionId: string, profileId: string) {
@@ -236,69 +241,67 @@ export default function PlanPage() {
   const orderedTeams = [...planTeams].sort((a, b) => Number(myTeamIds.has(b.id)) - Number(myTeamIds.has(a.id)));
   const songItems = items.filter((i) => i.kind === "song" && i.song_id).map((i) => ({ id: i.song_id!, title: i.title }));
 
+  const fmtLen = (m: number | null) => (m == null ? "" : `${m}:00`);
+  const teamAssignments = (teamId: string) => assignments.filter((a) => positions.some((p) => p.id === a.position_id && p.team_id === teamId));
+  const statusOf = (a: Assignment) => (a.attendance === "no_show" ? "no_show" : a.status);
+
+  const myRoles = myAssignments.length > 0 && (
+    <div className="space-y-2">
+      {myAssignments.map((a) => {
+        const { pos, team } = posName(a.position_id);
+        return (
+          <div key={a.id} className="rounded-lg border border-line bg-white p-3 shadow-sm">
+            <div className="flex items-center gap-3">
+              <Avatar name={displayName(me)} status={a.status} />
+              <div className="min-w-0 flex-1 text-sm leading-tight">
+                <div className="font-semibold">{pos}</div>
+                <div className="text-muted">{team}</div>
+              </div>
+              {a.status !== "pending" && a.status !== "unsent" && <StatusChip status={a.status} />}
+            </div>
+            {(a.status === "pending" || a.status === "unsent") && (
+              <div className="mt-2.5 grid grid-cols-2 gap-2">
+                <button className="btn py-1.5 text-xs" onClick={() => respond(a.id, "accepted")}>Accept</button>
+                <button className="btn-secondary py-1.5 text-xs" onClick={() => respond(a.id, "declined")}>Decline</button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="print:hidden">
-        <Link href="/plans" className="text-sm text-muted hover:text-ink">← Plans</Link>
-      </div>
-      <div>
-        <div className="min-w-0">
-          <h1 className="h1">{planLabel(plan)}</h1>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <button
-              className="grid h-8 w-8 place-items-center rounded-full bg-stone-100 text-accent disabled:opacity-30 print:hidden"
-              disabled={!neighbors.prev}
-              onClick={() => neighbors.prev && router.push(`/plans/${neighbors.prev}`)}
-              aria-label="Previous service"
-            >
-              ‹
-            </button>
-            <button
-              className="grid h-8 w-8 place-items-center rounded-full bg-stone-100 text-accent disabled:opacity-30 print:hidden"
-              disabled={!neighbors.next}
-              onClick={() => neighbors.next && router.push(`/plans/${neighbors.next}`)}
-              aria-label="Next service"
-            >
-              ›
-            </button>
-            <span className="font-display text-lg font-bold text-muted">
-              {fmtDate(plan.service_date, { weekday: undefined, year: undefined })}
+      <header className="flex flex-wrap items-end gap-x-4 gap-y-2 border-b border-line pb-4">
+        <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
+          <Link href="/plans" className="text-xs font-semibold uppercase tracking-wider text-muted hover:text-ink print:hidden">
+            {loc.name(plan.location_id) || "Plans"} · Services
+          </Link>
+          <h1 className="mt-0.5 font-display text-3xl font-extrabold tracking-tight">{planLabel(plan)}</h1>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="flex overflow-hidden rounded-full border border-line bg-white print:hidden">
+              <button className="px-3 py-1 text-muted hover:bg-stone-50 disabled:opacity-30" disabled={!neighbors.prev} onClick={() => neighbors.prev && router.push(`/plans/${neighbors.prev}`)} aria-label="Previous service">‹</button>
+              <button className="border-l border-line px-3 py-1 text-muted hover:bg-stone-50 disabled:opacity-30" disabled={!neighbors.next} onClick={() => neighbors.next && router.push(`/plans/${neighbors.next}`)} aria-label="Next service">›</button>
             </span>
-            {plan.location_id && <span className="rounded-sm bg-accent-soft px-1.5 py-0.5 text-xs font-bold uppercase text-accent">{loc.name(plan.location_id)}</span>}
-            {canEdit && (
-              <button className="btn-ghost ml-auto print:hidden" onClick={() => setShowDetails(!showDetails)} aria-expanded={showDetails}>
-                {showDetails ? "Done" : "⚙ Edit details"}
-              </button>
-            )}
+            <span className="whitespace-nowrap rounded-full border border-line bg-white px-3 py-1 text-sm font-semibold">
+              <span className="sm:hidden">{fmtDate(plan.service_date, { weekday: "short", month: "short" })}</span>
+              <span className="hidden sm:inline">{fmtDate(plan.service_date, { weekday: "long", month: "long" })}</span>
+            </span>
+            {plan.start_time && <span className="text-sm text-muted">{fmtTime(plan.start_time)}</span>}
           </div>
         </div>
-      </div>
-
-      {/* My role(s) in this service */}
-      {myAssignments.length > 0 && (
-        <div className="flex flex-wrap gap-2 print:hidden">
-          {myAssignments.map((a) => {
-            const { pos, team } = posName(a.position_id);
-            const ok = a.status === "accepted";
-            const no = a.status === "declined";
-            return (
-              <div key={a.id} className="flex items-stretch overflow-hidden rounded-md border border-line bg-white">
-                <span className={`grid w-10 place-items-center text-lg text-white ${ok ? "bg-ok" : no ? "bg-bad" : "bg-amber-500"}`}>{ok ? "✓" : no ? "✕" : "?"}</span>
-                <span className="px-3 py-2 text-sm">
-                  <b>{pos}</b> <span className="text-accent">({team})</span>
-                </span>
-                {(a.status === "pending" || a.status === "unsent") && (
-                  <span className="flex items-center gap-1 pr-2">
-                    <button className="btn py-1 text-xs" onClick={() => respond(a.id, "accepted")}>Accept</button>
-                    <button className="btn-secondary py-1 text-xs" onClick={() => respond(a.id, "declined")}>Decline</button>
-                  </span>
-                )}
-              </div>
-            );
-          })}
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto print:hidden">
+          <Link href={`/plans/${plan.id}/player`} className="btn flex-1 sm:flex-none">▶ Rehearse</Link>
+          <button className="btn-secondary" onClick={() => window.print()} aria-label="Print">🖨</button>
+          {canEdit && (
+            <button className="btn-secondary" onClick={() => setShowDetails(!showDetails)} aria-expanded={showDetails}>
+              {showDetails ? "Done" : "⚙ Details"}
+            </button>
+          )}
         </div>
-      )}
+      </header>
 
       {canEdit && showDetails && (
         <section className="card grid gap-3 sm:grid-cols-2 lg:grid-cols-3 print:hidden">
@@ -334,143 +337,243 @@ export default function PlanPage() {
         </section>
       )}
 
-      {/* Tabs */}
-      <div className="sticky top-[57px] z-10 -mx-4 flex overflow-x-auto border-b border-line bg-paper px-4 print:hidden">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`shrink-0 border-b-2 px-4 py-2.5 font-display text-sm font-bold uppercase tracking-wider ${tab === t ? "border-accent text-ink" : "border-transparent text-muted"}`}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
 
-      {tab === "Order" && (
-        <div className="space-y-3">
-          <div className="flex flex-wrap gap-2 print:hidden">
-            <Link href={`/plans/${plan.id}/player`} className="btn">▶ Play</Link>
-            <button className="btn-secondary" onClick={() => window.print()}>🖨 Print</button>
-            <Link href={`/live/${plan.id}`} className="btn-secondary">📡 Live</Link>
-            {totalMin > 0 && <span className="ml-auto self-center text-sm text-muted">{totalMin} min</span>}
-          </div>
-        {/* Order of service */}
-        <section className="card p-0">
-          <div className="border-b border-line px-4 py-3">
-            <h2 className="h2">Order of service</h2>
-          </div>
-          {items.length === 0 && <p className="px-4 py-6 text-sm text-muted">Nothing here yet.{canEdit && " Add songs and items below."}</p>}
-          <ul>
-            {items.map((it, i) => (
-              <ItemRow
-                key={it.id}
-                item={it}
-                time={times[i]}
-                canEdit={canEdit}
-                first={i === 0}
-                last={i === items.length - 1}
-                onSave={(patch) => saveItem(it.id, patch)}
-                onRemove={() => removeItem(it.id)}
-                onMove={(d) => move(i, d)}
-              />
-            ))}
-          </ul>
-          {canEdit && <AddBar songs={songs} onAdd={addItem} />}
-        </section>
-
-        </div>
-      )}
-
-      {tab === "Teams" && (
-        <section className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <TeamCounts list={assignments} big />
-            {canEdit && (
-              <button className="btn ml-auto print:hidden" disabled={!unsent || sending} onClick={sendRequests} title="Ask everyone marked 'Not sent' to confirm">
-                {sending ? "Sending…" : `Send requests${unsent ? ` (${unsent})` : ""}`}
-              </button>
-            )}
-          </div>
-          {isPast && canEdit && <p className="text-sm text-muted print:hidden">After the service: tap <b>Here</b> or <b>No-show</b> for each person. No-shows count toward Team health.</p>}
-          {planTeams.length === 0 && <p className="text-sm text-muted">No teams yet. <Link href="/teams" className="text-accent">Set up teams</Link></p>}
-          <div className="grid gap-4 md:grid-cols-2">
-          {orderedTeams.map((team) => (
-            <div key={team.id} className="card">
-              {myTeamIds.has(team.id) && orderedTeams[0].id === team.id && <div className="label mb-1 text-accent">My team</div>}
-              <h3 className="mb-2 flex flex-wrap items-center gap-x-3 font-display font-bold">
-                <span className="flex-1">
-                  {team.name}
-                  {!team.location_id && <span className="ml-2 text-xs font-normal text-muted">Shared</span>}
-                </span>
-                <TeamCounts list={assignments.filter((a) => positions.some((p) => p.id === a.position_id && p.team_id === team.id))} />
-              </h3>
-              <ul className="space-y-2">
-                {positions.filter((p) => p.team_id === team.id).map((pos) => {
-                  const here = assignments.filter((a) => a.position_id === pos.id);
-                  const rosterIds = new Set(roster.filter((r) => r.position_id === pos.id).map((r) => r.profile_id));
-                  const taken = new Set(here.map((a) => a.profile_id));
-                  const choices = people.filter((p) => !taken.has(p.id)).sort((x, y) => Number(!!y.verified) - Number(!!x.verified));
-                  return (
-                    <li key={pos.id} className="text-sm">
-                      <div className="text-xs font-medium uppercase tracking-wide text-muted">{pos.name}</div>
-                      {here.map((a) => (
-                        <div key={a.id} className="flex items-center gap-2 py-0.5">
-                          <span className="flex-1">{personName(a.profile_id)} <Verified on={people.find((x) => x.id === a.profile_id)?.verified} />{blocked.has(a.profile_id) && <span className="ml-1 text-xs text-bad">(blocked out)</span>}</span>
-                          {isPast && canEdit && a.status === "accepted" ? (
-                            <span className="flex overflow-hidden rounded-sm border border-line text-xs font-bold print:hidden">
-                              <button
-                                className={`px-2 py-0.5 ${a.attendance === "present" ? "bg-ok text-white" : "text-muted"}`}
-                                onClick={() => markAttendance(a.id, a.attendance === "present" ? null : "present")}
-                              >
-                                Here
-                              </button>
-                              <button
-                                className={`border-l border-line px-2 py-0.5 ${a.attendance === "no_show" ? "bg-bad text-white" : "text-muted"}`}
-                                onClick={() => markAttendance(a.id, a.attendance === "no_show" ? null : "no_show")}
-                              >
-                                No-show
-                              </button>
-                            </span>
-                          ) : a.attendance === "no_show" ? (
-                            <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">No-show</span>
-                          ) : (
-                            <StatusChip status={a.status} />
-                          )}
-                          {canEdit && <button className="btn-ghost px-1 print:hidden" onClick={() => unassign(a.id)} aria-label="Remove">✕</button>}
-                        </div>
-                      ))}
-                      {canEdit && (
-                        <select
-                          className="input mt-1 py-1 text-xs print:hidden"
-                          value=""
-                          onChange={(e) => e.target.value && assign(pos.id, e.target.value)}
-                        >
-                          <option value="">+ Schedule someone…</option>
-                          <optgroup label="On this roster">
-                            {choices.filter((p) => rosterIds.has(p.id)).map((p) => (
-                              <option key={p.id} value={p.id}>{p.verified ? "✓ " : ""}{p.full_name || p.email}{blocked.has(p.id) ? " — blocked out" : ""}</option>
-                            ))}
-                          </optgroup>
-                          <optgroup label="Everyone else">
-                            {choices.filter((p) => !rosterIds.has(p.id)).map((p) => (
-                              <option key={p.id} value={p.id}>{p.verified ? "✓ " : ""}{p.full_name || p.email}{blocked.has(p.id) ? " — blocked out" : ""}</option>
-                            ))}
-                          </optgroup>
-                        </select>
-                      )}
-                      {!canEdit && here.length === 0 && <div className="text-muted">—</div>}
-                    </li>
-                  );
-                })}
+      <div className="lg:grid lg:grid-cols-[17rem_minmax(0,1fr)] lg:gap-8">
+        {/* Side panel (computers) */}
+        <aside className="hidden space-y-6 lg:block print:hidden">
+          {myRoles && (
+            <section>
+              <h2 className="label mb-2">Your role</h2>
+              {myRoles}
+            </section>
+          )}
+          <section>
+            <button className="label mb-2 hover:text-ink" onClick={() => setTab("Times")}>🕘 Times</button>
+            {planTimes.length === 0 ? (
+              <p className="text-sm text-muted">{plan.start_time ? `Service ${fmtTime(plan.start_time)}` : "No times yet"}</p>
+            ) : (
+              <ul className="space-y-1.5 text-sm">
+                {planTimes.map((t) => (
+                  <li key={t.id} className="flex gap-2">
+                    <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${t.kind === "service" ? "bg-accent" : t.kind === "rehearsal" ? "bg-stone-700" : "bg-stone-400"}`} />
+                    <span>
+                      <span className="font-medium">{t.label || (t.kind === "service" ? "Service" : t.kind === "rehearsal" ? "Rehearsal" : "Other")}</span>
+                      <span className="block text-xs text-muted">
+                        {fmtDate(t.day, { year: undefined })} · {[fmtTime(t.starts), fmtTime(t.ends)].filter(Boolean).join("–")}
+                      </span>
+                    </span>
+                  </li>
+                ))}
               </ul>
+            )}
+          </section>
+          <section>
+            <button className="label mb-2 hover:text-ink" onClick={() => setTab("Teams")}>👥 Teams</button>
+            <div className="overflow-hidden rounded-lg border border-line bg-white">
+              {orderedTeams.map((team) => {
+                const list = teamAssignments(team.id);
+                if (!list.length) return null;
+                return (
+                  <div key={team.id} className="border-b border-line last:border-0">
+                    <div className="flex items-center gap-2 px-3 py-2">
+                      <span className="flex-1 text-sm font-bold">{team.name}</span>
+                      <TeamCounts list={list} small />
+                    </div>
+                    {positions.filter((p) => p.team_id === team.id).map((pos) => {
+                      const here = assignments.filter((a) => a.position_id === pos.id);
+                      if (!here.length) return null;
+                      return (
+                        <div key={pos.id}>
+                          <div className="bg-stone-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{pos.name}</div>
+                          {here.map((a) => (
+                            <div key={a.id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                              <Avatar name={personName(a.profile_id)} status={statusOf(a)} size="sm" />
+                              <span className="truncate">{personName(a.profile_id)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+              {!assignments.length && <p className="px-3 py-2 text-sm text-muted">No one scheduled yet.</p>}
             </div>
-          ))}
-          </div>
-        </section>
-      )}
+          </section>
+        </aside>
 
-      {tab === "Times" && <PlanTimes planId={plan.id} serviceDate={plan.service_date} canEdit={canEdit} />}
+        {/* Main */}
+        <div className="min-w-0 space-y-5">
+          {myRoles && <div className="lg:hidden">{myRoles}</div>}
+
+          {/* Tabs */}
+          <div className="sticky top-[57px] z-10 -mx-4 flex overflow-x-auto border-b border-line bg-paper px-4 lg:mx-0 lg:px-0 print:hidden">
+            {TABS.map((t) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={`shrink-0 border-b-2 px-4 py-2.5 text-sm font-semibold ${tab === t ? "border-accent text-ink" : "border-transparent text-muted hover:text-ink"}`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+
+          {tab === "Order" && (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2 print:hidden">
+                <Link href={`/plans/${plan.id}/player`} className="btn-secondary">▶ Play</Link>
+                <Link href={`/live/${plan.id}`} className="btn-secondary">📡 Live</Link>
+                <span className="text-sm text-muted">{items.filter((i) => i.kind !== "header").length} items{totalMin > 0 && ` · ${totalMin} min`}</span>
+                {canEdit && (
+                  <button className={`ml-auto ${editOrder ? "btn" : "btn-secondary"}`} onClick={() => setEditOrder(!editOrder)}>
+                    {editOrder ? "✓ Done editing" : "✏ Edit order"}
+                  </button>
+                )}
+              </div>
+
+              <section className="overflow-hidden rounded-lg border border-line bg-white shadow-sm">
+                <div className="grid grid-cols-[5rem_minmax(0,1fr)] border-b border-line bg-white px-4 py-2 text-[11px] font-bold uppercase tracking-[0.15em] text-muted">
+                  <span>Length</span>
+                  <span>Title</span>
+                </div>
+                {items.length === 0 && <p className="px-4 py-8 text-center text-sm text-muted">Nothing here yet.{canEdit && " Tap ✏ Edit order to add songs and items."}</p>}
+                {editOrder ? (
+                  <ul>
+                    {items.map((it, i) => (
+                      <ItemRow
+                        key={it.id}
+                        item={it}
+                        time={times[i]}
+                        canEdit
+                        first={i === 0}
+                        last={i === items.length - 1}
+                        onSave={(patch) => saveItem(it.id, patch)}
+                        onRemove={() => removeItem(it.id)}
+                        onMove={(d) => move(i, d)}
+                      />
+                    ))}
+                  </ul>
+                ) : (
+                  <ul>
+                    {items.map((it, i) =>
+                      it.kind === "header" ? (
+                        <li key={it.id} className="border-b border-line bg-stone-100 px-4 py-2 text-xs font-bold uppercase tracking-wider text-ink">
+                          {it.title}
+                        </li>
+                      ) : (
+                        <ViewRow key={it.id} item={it} start={times[i]} length={fmtLen(it.duration_min)} />
+                      )
+                    )}
+                  </ul>
+                )}
+                {editOrder && <AddBar songs={songs} onAdd={addItem} />}
+              </section>
+            </div>
+          )}
+
+          {tab === "Teams" && (
+            <section className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <TeamCounts list={assignments} big />
+                {canEdit && (
+                  <button className="btn ml-auto print:hidden" disabled={!unsent || sending} onClick={sendRequests} title="Ask everyone marked 'Not sent' to confirm">
+                    {sending ? "Sending…" : `Send requests${unsent ? ` (${unsent})` : ""}`}
+                  </button>
+                )}
+              </div>
+              {isPast && canEdit && <p className="text-sm text-muted print:hidden">After the service: tap <b>Here</b> or <b>No-show</b> for each person. No-shows count toward Team health.</p>}
+              {planTeams.length === 0 && <p className="text-sm text-muted">No teams yet. <Link href="/teams" className="text-accent">Set up teams</Link></p>}
+              {people.some((p) => !p.full_name?.trim()) && canEdit && (
+                <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  Some people don&apos;t have a name yet, so a name is made from their email. <Link href="/people" className="font-semibold underline">Add names on People</Link>.
+                </p>
+              )}
+              <div className="grid gap-4 xl:grid-cols-2">
+                {orderedTeams.map((team) => (
+                  <div key={team.id} className="overflow-hidden rounded-lg border border-line bg-white shadow-sm">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-4 py-3">
+                      <h3 className="flex-1 font-display text-lg font-bold">
+                        {team.name}
+                        {myTeamIds.has(team.id) && <span className="ml-2 rounded-full bg-accent-soft px-2 py-0.5 align-middle text-[10px] font-bold uppercase text-accent">My team</span>}
+                      </h3>
+                      <TeamCounts list={teamAssignments(team.id)} />
+                    </div>
+                    {positions.filter((p) => p.team_id === team.id).map((pos) => {
+                      const here = assignments.filter((a) => a.position_id === pos.id);
+                      const rosterIds = new Set(roster.filter((r) => r.position_id === pos.id).map((r) => r.profile_id));
+                      const taken = new Set(here.map((a) => a.profile_id));
+                      const choices = people.filter((p) => !taken.has(p.id)).sort((x, y) => Number(!!y.verified) - Number(!!x.verified));
+                      const adding = addingTo === pos.id;
+                      return (
+                        <div key={pos.id} className="border-b border-line last:border-0">
+                          <div className="flex items-center gap-2 bg-stone-50 px-4 py-1.5">
+                            <span className="flex-1 text-xs font-semibold uppercase tracking-wide text-muted">{pos.name}</span>
+                            {canEdit && (
+                              <button className="text-xs font-semibold text-accent hover:underline print:hidden" onClick={() => setAddingTo(adding ? null : pos.id)}>
+                                {adding ? "Cancel" : "+ Add"}
+                              </button>
+                            )}
+                          </div>
+                          {here.map((a) => (
+                            <div key={a.id} className="group flex items-center gap-3 px-4 py-2">
+                              <Avatar name={personName(a.profile_id)} status={statusOf(a)} />
+                              <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                                {personName(a.profile_id)} <Verified on={people.find((x) => x.id === a.profile_id)?.verified} />
+                                {blocked.has(a.profile_id) && <span className="ml-1 text-xs font-normal text-bad">blocked out</span>}
+                              </span>
+                              {isPast && canEdit && a.status === "accepted" ? (
+                                <span className="flex overflow-hidden rounded-full border border-line text-xs font-semibold print:hidden">
+                                  <button className={`px-2.5 py-0.5 ${a.attendance === "present" ? "bg-ok text-white" : "text-muted"}`} onClick={() => markAttendance(a.id, a.attendance === "present" ? null : "present")}>Here</button>
+                                  <button className={`border-l border-line px-2.5 py-0.5 ${a.attendance === "no_show" ? "bg-bad text-white" : "text-muted"}`} onClick={() => markAttendance(a.id, a.attendance === "no_show" ? null : "no_show")}>No-show</button>
+                                </span>
+                              ) : a.attendance === "no_show" ? (
+                                <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">No-show</span>
+                              ) : (
+                                <StatusChip status={a.status} />
+                              )}
+                              {canEdit && (
+                                <button className="text-muted opacity-60 hover:text-bad hover:opacity-100 print:hidden" onClick={() => unassign(a.id)} aria-label={`Remove ${personName(a.profile_id)}`}>✕</button>
+                              )}
+                            </div>
+                          ))}
+                          {!here.length && !adding && <p className="px-4 py-2 text-sm italic text-stone-400">Needs someone</p>}
+                          {adding && (
+                            <div className="px-4 py-2 print:hidden">
+                              <select
+                                autoFocus
+                                className="input py-1.5 text-sm"
+                                value=""
+                                onChange={(e) => {
+                                  if (!e.target.value) return;
+                                  assign(pos.id, e.target.value);
+                                  setAddingTo(null);
+                                }}
+                              >
+                                <option value="">Choose who to schedule…</option>
+                                <optgroup label={`Plays ${pos.name}`}>
+                                  {choices.filter((p) => rosterIds.has(p.id)).map((p) => (
+                                    <option key={p.id} value={p.id}>{p.verified ? "✓ " : ""}{displayName(p)}{blocked.has(p.id) ? " (blocked out)" : ""}</option>
+                                  ))}
+                                </optgroup>
+                                <optgroup label="Everyone else">
+                                  {choices.filter((p) => !rosterIds.has(p.id)).map((p) => (
+                                    <option key={p.id} value={p.id}>{p.verified ? "✓ " : ""}{displayName(p)}{blocked.has(p.id) ? " (blocked out)" : ""}</option>
+                                  ))}
+                                </optgroup>
+                              </select>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {tab === "Times" && <PlanTimes planId={plan.id} serviceDate={plan.service_date} canEdit={canEdit} />}
 
       {tab === "Notes" && (
         <div className="space-y-4">
@@ -498,14 +601,52 @@ export default function PlanPage() {
         </div>
       )}
 
-      {tab === "Files" && <PlanFiles planId={plan.id} songs={songItems} />}
+          {tab === "Files" && <PlanFiles planId={plan.id} songs={songItems} />}
+        </div>
+      </div>
     </div>
   );
 }
 
-function TeamCounts({ list, big = false }: { list: Assignment[]; big?: boolean }) {
+/** Read-only order-of-service row: length, title, notes, song key and a listen button. */
+function ViewRow({ item, start, length }: { item: PlanItem; start: string | null; length: string }) {
+  const [listening, setListening] = useState(false);
+  return (
+    <li className="grid grid-cols-[5rem_minmax(0,1fr)] gap-x-2 border-b border-line px-4 py-3 last:border-0">
+      <div className="text-sm tabular-nums">
+        <div className="font-semibold">{length}</div>
+        {start && <div className="text-xs text-muted">{fmtTime(start)}</div>}
+      </div>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          {item.kind === "song" ? (
+            <>
+              <Link href={`/songs/${item.song_id}`} className="font-semibold hover:text-accent">{item.title}</Link>
+              {item.song_key && <span className="rounded-full bg-accent-soft px-2 py-0.5 text-xs font-bold text-accent">{item.song_key}</span>}
+            </>
+          ) : (
+            <span className="text-sm font-semibold uppercase tracking-wide">{item.title}</span>
+          )}
+        </div>
+        {item.description && <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-muted">{item.description}</p>}
+        {item.song_id && (
+          <button className="mt-1 text-xs font-semibold text-accent hover:underline print:hidden" onClick={() => setListening(!listening)}>
+            {listening ? "▾ Hide player" : "▶ Listen"}
+          </button>
+        )}
+        {item.song_id && listening && (
+          <div className="pt-2 print:hidden">
+            <SongListen songId={item.song_id} referenceUrl={(item as PlanItem & { songs?: { reference_url: string | null } | null }).songs?.reference_url} showEmptyNote />
+          </div>
+        )}
+      </div>
+    </li>
+  );
+}
+
+function TeamCounts({ list, big = false, small = false }: { list: Assignment[]; big?: boolean; small?: boolean }) {
   const n = (s: string) => list.filter((a) => a.status === s).length;
-  const cls = big ? "text-base" : "text-sm";
+  const cls = big ? "text-base" : small ? "text-xs gap-2" : "text-sm";
   return (
     <span className={`flex items-center gap-3 font-sans font-semibold ${cls}`}>
       <span className="text-ok" title="Confirmed">✓ {n("accepted")}</span>
