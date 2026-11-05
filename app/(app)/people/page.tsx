@@ -16,7 +16,7 @@ export default function PeoplePage() {
   const loc = useLocations();
   const supabase = createClient();
   const [people, setPeople] = useState<Profile[]>([]);
-  const [form, setForm] = useState({ email: "", name: "", role: "member" as Role, location_id: "" });
+  const [form, setForm] = useState({ email: "", name: "", password: "", role: "member" as Role, location_id: "" });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -43,6 +43,19 @@ export default function PeoplePage() {
     load();
   }
 
+  async function setPassword(p: Profile) {
+    const pw = prompt(`New password for ${p.full_name || p.email} (8+ characters). Tell them this password; they can change it under My Profile.`);
+    if (!pw) return;
+    if (pw.length < 8) return alert("Use at least 8 characters.");
+    const res = await fetch("/api/people", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: p.id, password: pw }),
+    });
+    const body = await res.json().catch(() => ({}));
+    alert(res.ok ? "Password set." : body.error ?? "Could not set password");
+  }
+
   async function add(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -55,8 +68,8 @@ export default function PeoplePage() {
     const body = await res.json().catch(() => ({}));
     setBusy(false);
     if (!res.ok) return setMsg(body.error ?? "Could not add person");
-    setMsg(body.emailed ? `Added ${form.email} and emailed them a sign-in link.` : `Added ${form.email}. ${body.note ?? ""}`);
-    setForm({ email: "", name: "", role: "member", location_id: "" });
+    setMsg(`Added ${form.email}. They can sign in at ${window.location.origin}/login with that email and the starting password.`);
+    setForm({ email: "", name: "", password: "", role: "member", location_id: "" });
     load();
   }
 
@@ -81,9 +94,10 @@ export default function PeoplePage() {
         </section>
       )}
 
-      <form onSubmit={add} className="card grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto_auto_auto] lg:items-end">
+      <form onSubmit={add} className="card grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_auto_auto_auto] lg:items-end">
         <label className="block"><span className="label">Email</span><input type="email" required className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
         <label className="block"><span className="label">Name</span><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
+        <label className="block"><span className="label">Starting password</span><input className="input" required minLength={8} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="8+ characters" autoComplete="off" /></label>
         <label className="block"><span className="label">Role</span>
           <select className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as Role })}>
             {ROLES.filter((r) => r.value !== "pending").map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
@@ -98,13 +112,13 @@ export default function PeoplePage() {
           </label>
         )}
         <button className="btn" disabled={busy}>{busy ? "Adding…" : "Add person"}</button>
-        {msg && <p className="text-sm text-muted sm:col-span-2 lg:col-span-5">{msg}</p>}
+        {msg && <p className="text-sm text-muted sm:col-span-2 lg:col-span-6">{msg}</p>}
       </form>
 
       <div className="card overflow-x-auto p-0">
         <table className="w-full text-sm">
           <thead className="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
-            <tr><th className="px-4 py-2">Name</th><th className="px-4 py-2">Email</th><th className="hidden px-4 py-2 sm:table-cell">Phone</th><th className="px-4 py-2">Role</th>{loc.locations.length > 0 && <th className="px-4 py-2">Location</th>}</tr>
+            <tr><th className="px-4 py-2">Name</th><th className="px-4 py-2">Email</th><th className="hidden px-4 py-2 sm:table-cell">Phone</th><th className="px-4 py-2">Role</th>{loc.locations.length > 0 && <th className="px-4 py-2">Location</th>}<th className="px-4 py-2" /></tr>
           </thead>
           <tbody className="divide-y divide-line">
             {people.map((p) => (
@@ -125,6 +139,7 @@ export default function PeoplePage() {
                     </select>
                   </td>
                 )}
+                <td className="px-4 py-2 text-right"><button className="btn-ghost whitespace-nowrap" onClick={() => setPassword(p)}>Set password</button></td>
               </tr>
             ))}
           </tbody>

@@ -20,6 +20,8 @@ export default function MePage() {
   const [blockouts, setBlockouts] = useState<Blockout[]>([]);
   const [bo, setBo] = useState({ starts_on: todayISO(), ends_on: todayISO(), reason: "" });
   const [history, setHistory] = useState<Hist[]>([]);
+  const [pw, setPw] = useState("");
+  const [pwMsg, setPwMsg] = useState("");
 
   const load = useCallback(async () => {
     const [b, h] = await Promise.all([
@@ -38,6 +40,15 @@ export default function MePage() {
     await supabase.from("profiles").update({ full_name: name.trim(), phone: phone.trim() || null }).eq("id", me.id);
     setSaved(true);
     router.refresh();
+  }
+
+  async function changePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setPwMsg("");
+    if (pw.length < 8) return setPwMsg("Use at least 8 characters.");
+    const { error } = await supabase.auth.updateUser({ password: pw });
+    setPwMsg(error ? error.message : "Password updated.");
+    if (!error) setPw("");
   }
 
   async function addBlockout(e: React.FormEvent) {
@@ -60,6 +71,15 @@ export default function MePage() {
             <p className="text-sm text-muted">Email: {me.email} · Role: {me.role}</p>
             <button className="btn">{saved ? "Saved ✓" : "Save"}</button>
           </form>
+        </section>
+
+        <section className="card">
+          <h2 className="h2 mb-3">Change password</h2>
+          <form onSubmit={changePassword} className="flex flex-wrap gap-2">
+            <input type="password" className="input flex-1" placeholder="New password (8+ characters)" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="new-password" />
+            <button className="btn">Save</button>
+          </form>
+          {pwMsg && <p className="mt-2 text-sm text-muted">{pwMsg}</p>}
         </section>
 
         <section className="card">
