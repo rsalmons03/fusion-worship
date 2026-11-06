@@ -30,3 +30,5 @@ body { @apply bg-paper text-ink antialiased; }
 .fw-fade { animation: fw-fade .45s ease-out; }
 @keyframes fw-fade { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .fw-blob { animation: none; } }
+.fw-kenburns { animation: fw-kenburns 40s ease-in-out infinite alternate; }
+@keyframes fw-kenburns { from { transform: scale(1); } to { transform: scale(1.12) translate(-2%, -1%); } }

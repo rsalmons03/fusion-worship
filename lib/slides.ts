@@ -85,17 +85,37 @@ export type ScreenState = {
   follow: boolean;
 };
 
-export const DEFAULT_SCREEN: ScreenState = { slide: 0, clear: false, logo: true, black: false, bg: "ember", lines: 2, follow: false };
+export const DEFAULT_SCREEN: ScreenState = { slide: 0, clear: false, logo: true, black: false, bg: "bokeh:ember", lines: 2, follow: false };
 
-export const BACKGROUNDS: { id: string; name: string; colors: string[] }[] = [
+export const PALETTES: { id: string; name: string; colors: string[] }[] = [
   { id: "ember", name: "Ember", colors: ["#df6437", "#7a1f0e", "#f2a65a"] },
-  { id: "ocean", name: "Ocean", colors: ["#0e4d92", "#062a4f", "#3fa7d6"] },
-  { id: "aurora", name: "Aurora", colors: ["#2b9348", "#5a189a", "#00b4d8"] },
-  { id: "dusk", name: "Dusk", colors: ["#7b2cbf", "#c9184a", "#ff8fa3"] },
-  { id: "gold", name: "Gold", colors: ["#b8860b", "#3d2b00", "#ffd166"] },
-  { id: "night", name: "Night", colors: ["#1b263b", "#0d1b2a", "#415a77"] },
-  { id: "black", name: "Plain black", colors: [] },
+  { id: "ocean", name: "Ocean", colors: ["#1e7fd6", "#062a4f", "#5fd3f3"] },
+  { id: "aurora", name: "Aurora", colors: ["#2bd17e", "#3a0f6b", "#00b4d8"] },
+  { id: "dusk", name: "Dusk", colors: ["#9d4edd", "#4a0e3a", "#ff6f91"] },
+  { id: "gold", name: "Gold", colors: ["#f0b429", "#2e1f00", "#ffe08a"] },
+  { id: "night", name: "Night", colors: ["#4f6db8", "#0b1226", "#9fb7ff"] },
+  { id: "rose", name: "Rose", colors: ["#ff5d8f", "#3b0a1e", "#ffc2d1"] },
+  { id: "mono", name: "White", colors: ["#d9d9d9", "#141414", "#ffffff"] },
 ];
+
+export const BG_STYLES: { id: string; name: string }[] = [
+  { id: "bokeh", name: "Bokeh" },
+  { id: "rays", name: "Light rays" },
+  { id: "waves", name: "Waves" },
+  { id: "sparks", name: "Sparks" },
+  { id: "stars", name: "Stars" },
+  { id: "flow", name: "Soft flow" },
+  { id: "black", name: "Black" },
+];
+
+/** Backgrounds are saved as "style:palette" (e.g. "bokeh:ocean") or "media:<file path>". Old single names still work. */
+export function parseBg(bg: string): { style: string; palette: string; path?: string } {
+  if (bg.startsWith("media:")) return { style: "media", palette: "ember", path: bg.slice(6) };
+  if (bg === "black") return { style: "black", palette: "ember" };
+  const [a, b] = bg.split(":");
+  if (b) return { style: a, palette: b };
+  return { style: "flow", palette: PALETTES.some((p) => p.id === a) ? a : "ember" };
+}
 
 export const screenChannel = (planId: string) => `screen-${planId}`;
 

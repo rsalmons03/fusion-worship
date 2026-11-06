@@ -1,19 +1,11 @@
 "use client";
-import { BACKGROUNDS, type ScreenState, type Slide } from "@/lib/slides";
+import { type ScreenState, type Slide } from "@/lib/slides";
+import Background from "./Backgrounds";
 import { CHURCH_NAME } from "@/lib/format";
 
-/** Slow-moving coloured blobs behind the words. */
+/** Kept for older imports: the moving background. */
 export function MotionBackground({ bg }: { bg: string }) {
-  const b = BACKGROUNDS.find((x) => x.id === bg) ?? BACKGROUNDS[0];
-  if (!b.colors.length) return <div className="absolute inset-0 bg-black" />;
-  return (
-    <div className="absolute inset-0 overflow-hidden" style={{ background: b.colors[1] }}>
-      {b.colors.map((c, i) => (
-        <div key={i} className={`fw-blob fw-blob-${i}`} style={{ background: `radial-gradient(circle, ${c} 0%, transparent 65%)` }} />
-      ))}
-      <div className="absolute inset-0 bg-black/35" />
-    </div>
-  );
+  return <Background bg={bg} />;
 }
 
 /** One projector slide. Sizes use container units so it works full-screen and as a small preview. */

@@ -5,7 +5,8 @@ import { useEffect, useRef } from "react";
 import SlideView from "@/components/screen/SlideView";
 import { useScreenSync } from "@/components/screen/useScreenSync";
 import { stepState, usePlanSlides } from "@/components/screen/usePlanSlides";
-import { BACKGROUNDS, buildSlides } from "@/lib/slides";
+import { buildSlides } from "@/lib/slides";
+import BackgroundPicker from "@/components/screen/BackgroundPicker";
 import { fmtDate, planLabel } from "@/lib/format";
 
 // Phone remote for the lyrics screen.
@@ -40,6 +41,7 @@ export default function RemotePage() {
           <Link href={`/plans/${id}`} className="opacity-70">✕</Link>
           <span className="flex-1 truncate font-semibold">{plan ? `${planLabel(plan)} · ${fmtDate(plan.service_date, { year: undefined })}` : "…"}</span>
           <span className={`h-2 w-2 rounded-full ${online ? "bg-green-400" : "bg-amber-400"}`} title={online ? "Live" : "Connecting"} />
+          <a href="#backgrounds" className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">🎨</a>
           <Link href={`/stage/${id}`} target="_blank" className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">Stage ↗</Link>
           <Link href={`/screen/${id}`} target="_blank" className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">Screen ↗</Link>
         </div>
@@ -88,27 +90,15 @@ export default function RemotePage() {
           </section>
         ))}
 
-        <section className="space-y-2 rounded-lg border border-stone-800 p-3 text-sm">
-          <div className="text-xs font-bold uppercase tracking-wide text-stone-400">Background</div>
-          <div className="flex flex-wrap gap-2">
-            {BACKGROUNDS.map((b) => (
-              <button
-                key={b.id}
-                onClick={() => set({ bg: b.id })}
-                className={`h-10 w-14 rounded-md text-[10px] font-semibold ring-2 ${state.bg === b.id ? "ring-white" : "ring-transparent"}`}
-                style={{ background: b.colors.length ? `linear-gradient(135deg, ${b.colors.join(", ")})` : "#000" }}
-              >
-                {b.name}
-              </button>
-            ))}
-          </div>
+        <BackgroundPicker bg={state.bg} onPick={(bg) => set({ bg })}>
           <label className="flex items-center gap-2 pt-1">
             Lines per slide
             {[1, 2, 3, 4].map((n) => (
               <button key={n} onClick={() => setLines(n)} className={`h-8 w-8 rounded-full ${state.lines === n ? "bg-white text-black" : "bg-stone-800"}`}>{n}</button>
             ))}
           </label>
-        </section>
+        </BackgroundPicker>
+        
       </main>
 
       <footer className="fixed inset-x-0 bottom-0 border-t border-stone-800 bg-stone-950 px-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] pt-2">
