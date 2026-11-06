@@ -42,6 +42,20 @@ export function playThroughSilentSwitch() {
 }
 const buffers = new Map<string, Promise<AudioBuffer | null>>();
 
+/** Decodes audio without a live audio engine (iPhones glitch when extra engines run). */
+export function decodeAudio(data: ArrayBuffer): Promise<AudioBuffer> {
+  const W = window as unknown as { OfflineAudioContext?: typeof OfflineAudioContext; webkitOfflineAudioContext?: typeof OfflineAudioContext };
+  const OAC = W.OfflineAudioContext || W.webkitOfflineAudioContext;
+  const c = OAC ? new OAC(1, 1, 44100) : context();
+  if (!c) return Promise.reject(new Error("no audio"));
+  return new Promise((res, rej) => c.decodeAudioData(data, res, rej));
+}
+
+/** The page's single live audio engine: music, stems, key change, guide voice and metronome all share it. */
+export function sharedAudio() {
+  return context();
+}
+
 function context() {
   if (typeof window === "undefined") return null;
   if (!ctx || ctx.state === "closed") {
@@ -67,13 +81,12 @@ export function unlockCues() {
 function load(voice: string, slug: string) {
   const key = `${voice}/${slug}`;
   if (!buffers.has(key)) {
-    const c = context();
     buffers.set(
       key,
-      c
+      typeof window !== "undefined"
         ? fetch(`/cues/${key}.mp3`)
             .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject()))
-            .then((ab) => new Promise<AudioBuffer>((res, rej) => c.decodeAudioData(ab, res, rej)))
+            .then(decodeAudio)
             .catch(() => null)
         : Promise.resolve(null)
     );

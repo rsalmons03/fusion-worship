@@ -2,7 +2,7 @@
 import { alignSections, chartFromTranscript } from "@/lib/autosync";
 import { detectTempo, snapToBeat, type Tempo } from "@/lib/tempo";
 import { createPitchShifter } from "@/lib/pitchShift";
-import { CUE_VOICES, type CueVoiceId, cueClick, cueClock, cueLength, playThroughSilentSwitch, preloadCues, sayCue, unlockCues } from "@/lib/cueVoice";
+import { CUE_VOICES, type CueVoiceId, cueClick, cueClock, cueLength, decodeAudio, sharedAudio, playThroughSilentSwitch, preloadCues, sayCue, unlockCues } from "@/lib/cueVoice";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { parseChordPro, sectionsOf, type SectionInfo } from "@/lib/chordpro";
@@ -45,11 +45,6 @@ function fmt(t: number) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-type AudioCtor = typeof AudioContext;
-function newAudioContext() {
-  const Ctx: AudioCtor = window.AudioContext || (window as unknown as { webkitAudioContext: AudioCtor }).webkitAudioContext;
-  return new Ctx();
-}
 
 /**
  * Section roadmap + bottom player bar for a song's uploaded audio.
@@ -215,8 +210,7 @@ export default function RehearsalPlayer({
     (async () => {
       try {
         const buf = await (await fetch(trackUrl)).arrayBuffer();
-        const ctx = newAudioContext();
-        const audio = await ctx.decodeAudioData(buf);
+        const audio = await decodeAudio(buf);
         const data = audio.getChannelData(0);
         const bins = 240;
         const step = Math.floor(data.length / bins) || 1;
@@ -228,15 +222,17 @@ export default function RehearsalPlayer({
         }
         const top = Math.max(...p) || 1;
         if (alive) setPeaks(p.map((x) => x / top));
-        // Find the tempo and beat grid in the background.
-        setTimeout(() => {
+        // Find the tempo and beat grid when the phone is idle.
+        const run = () => {
           if (!alive) return;
           try {
             const t = detectTempo(data, audio.sampleRate);
             if (alive && t) setTempo(t);
           } catch {}
-        }, 50);
-        ctx.close();
+        };
+        const w = window as unknown as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => void };
+        if (w.requestIdleCallback) w.requestIdleCallback(run, { timeout: 4000 });
+        else setTimeout(run, 1500);
       } catch {
         if (alive) setPeaks([]); // waveform is optional; playback still works
       }
@@ -349,26 +345,29 @@ export default function RehearsalPlayer({
 
   // Web Audio graph so each stem has its own volume (phones ignore <audio>.volume).
   // Everything goes into `master`, then (when the key is changed) through the pitch shifter.
-  const graph = useRef<{ ctx: AudioContext; gains: Map<string, GainNode>; master: GainNode; shifter: AudioWorkletNode | null } | null>(null);
+  const graph = useRef<{ ctx: AudioContext; gains: Map<string, GainNode>; master: GainNode; shifter: AudioWorkletNode | null; sources: AudioNode[] } | null>(null);
   const [graphReady, setGraphReady] = useState(0);
   // Key change in semitones (−6…+6), like Moises. Only the audio; the chart follows via onPitch.
   const [pitch, setPitch] = useState(0);
   const ensureGraph = useCallback(
-    (force = false) => {
-      if (!useStems && !pitch && !force) return;
+    () => {
       if (!graph.current) {
         try {
-          const ctx = newAudioContext();
+          const ctx = sharedAudio();
+          if (!ctx) return;
           const master = ctx.createGain();
           master.connect(ctx.destination);
           const gains = new Map<string, GainNode>();
+          const sources: AudioNode[] = [];
           const els: [string, HTMLAudioElement][] = useStems ? [...stemEls.current.entries()] : audioRef.current ? [["main", audioRef.current]] : [];
           els.forEach(([id, el]) => {
             const g = ctx.createGain();
-            ctx.createMediaElementSource(el).connect(g).connect(master);
+            const src = ctx.createMediaElementSource(el);
+            src.connect(g).connect(master);
+            sources.push(src, g);
             gains.set(id, g);
           });
-          graph.current = { ctx, gains, master, shifter: null };
+          graph.current = { ctx, gains, master, shifter: null, sources };
           setGraphReady((n) => n + 1);
         } catch {
           graph.current = null;
@@ -376,7 +375,7 @@ export default function RehearsalPlayer({
       }
       graph.current?.ctx.resume().catch(() => {});
     },
-    [useStems, pitch]
+    [useStems]
   );
   useEffect(() => {
     const g = graph.current;
@@ -411,7 +410,7 @@ export default function RehearsalPlayer({
     const next = Math.max(-6, Math.min(6, pitch + d));
     if (next === pitch) return;
     unlockCues();
-    if (next && !graph.current) ensureGraph(true); // built inside the tap so phones allow it
+    if (!graph.current) ensureGraph(); // built inside the tap so phones allow it
     setPitch(next);
   }
 
@@ -419,7 +418,18 @@ export default function RehearsalPlayer({
   const stemKey = stems.map((s) => s.id + s.url).join();
   useEffect(() => {
     return () => {
-      graph.current?.ctx.close().catch(() => {});
+      // Unplug this song's nodes; the shared engine keeps running for the next song.
+      const g = graph.current;
+      if (g) {
+        [...g.sources, g.master].forEach((n) => {
+          try {
+            n.disconnect();
+          } catch {}
+        });
+        try {
+          g.shifter?.disconnect();
+        } catch {}
+      }
       graph.current = null;
     };
   }, [useStems, stemKey, track?.id]);
@@ -572,7 +582,9 @@ export default function RehearsalPlayer({
   const [click, setClick] = useState(false);
   useEffect(() => {
     if (!click || !countBpm) return;
-    const ctx = newAudioContext();
+    const ctx = sharedAudio();
+    if (!ctx) return;
+    ctx.resume().catch(() => {});
     const spb = 60 / countBpm;
     let next = ctx.currentTime + 0.1;
     let beat = 0;
@@ -592,10 +604,7 @@ export default function RehearsalPlayer({
     };
     const id = window.setInterval(tick, 50);
     tick();
-    return () => {
-      window.clearInterval(id);
-      ctx.close();
-    };
+    return () => window.clearInterval(id);
   }, [click, countBpm]);
 
   // ── Count-in: clicks at the song's tempo with a spoken count, then the song starts ──
