@@ -5,7 +5,10 @@ const MODEL = () => process.env.REPLICATE_STEMS_MODEL || "ryan5453/demucs";
 
 function token() {
   const t = (process.env.REPLICATE_API_TOKEN ?? "").trim();
-  if (!t) throw new Error("Stem splitting isn't set up: add REPLICATE_API_TOKEN as a Secret in Cloudflare (fusion-worshipppp → Settings → Variables and Secrets), then Deploy.");
+  if (!t)
+    throw new Error(
+      "The AI isn't connected yet. Add REPLICATE_API_TOKEN as a Secret in Cloudflare: dash.cloudflare.com → Workers & Pages → fusion-worshipppp → Settings → Variables and Secrets → Add (type Secret), then Deploy. Get the token at replicate.com/account/api-tokens."
+    );
   return t;
 }
 
