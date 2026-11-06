@@ -98,3 +98,99 @@ export function alignSections(chart: string, segs: TimedLine[], duration: number
   sections.forEach((s, i) => (markers[s.n] = Math.round(Math.min(out[i], Math.max(0, duration - 1)) * 10) / 10));
   return { markers, found, total: withWords };
 }
+
+/**
+ * For a song with no lyrics yet: builds a chart (lyrics + section names) and section times
+ * straight from what the AI heard. Sections are worked out from the song's shape:
+ * the block that repeats most is the Chorus, a block that always comes just before it is the
+ * Pre-Chorus, new blocks after the second chorus are the Bridge, the rest are Verses.
+ */
+export function chartFromTranscript(segsIn: TimedLine[], duration: number) {
+  // Clean lines (drop empty and the AI's stock filler).
+  const segs = segsIn
+    .map((s) => ({ ...s, text: s.text.replace(/\s+/g, " ").trim() }))
+    .filter((s) => s.text && words(s.text).length && !/^(thank you|thanks for watching|music|♪+)\.?$/i.test(s.text));
+  if (!segs.length) return null;
+
+  // Lines into blocks: a pause starts a new block; long blocks are split.
+  type Block = { lines: string[]; start: number; end: number };
+  const blocks: Block[] = [];
+  let cur: Block | null = null;
+  for (const s of segs) {
+    const gap = cur ? s.start - cur.end : Infinity;
+    if (!cur || gap > 1.6 || cur.lines.length >= 8) {
+      cur = { lines: [], start: s.start, end: s.end };
+      blocks.push(cur);
+    }
+    cur.lines.push(s.text.replace(/^[a-z]/, (c) => c.toUpperCase()));
+    cur.end = s.end;
+  }
+
+  // Group blocks that are the same words (repeats).
+  const bag = (b: Block) => new Set(words(b.lines.join(" ")));
+  const sim = (a: Set<string>, b: Set<string>) => {
+    let n = 0;
+    a.forEach((w) => b.has(w) && n++);
+    // same words, and roughly the same length (a short tag isn't the whole chorus)
+    if (Math.min(a.size, b.size) < Math.max(a.size, b.size) * 0.5) return 0;
+    return n / Math.max(1, Math.min(a.size, b.size));
+  };
+  const group: number[] = [];
+  const reps: Set<string>[] = [];
+  blocks.forEach((b, i) => {
+    const w = bag(b);
+    const g = reps.findIndex((r) => sim(r, w) >= 0.6);
+    if (g >= 0) group[i] = g;
+    else {
+      reps.push(w);
+      group[i] = reps.length - 1;
+    }
+  });
+  const count = (g: number) => group.filter((x) => x === g).length;
+  const groups = [...new Set(group)];
+
+  // Chorus: repeats the most (ties: the longer one).
+  const len = (g: number) => blocks[group.indexOf(g)].lines.length;
+  const chorus = groups.filter((g) => count(g) >= 2).sort((a, b) => count(b) - count(a) || len(b) - len(a))[0] ?? -1;
+  const chorusAt = group.map((g, i) => (g === chorus ? i : -1)).filter((i) => i >= 0);
+  // Pre-chorus: repeats, and every time it's followed by the chorus.
+  const pre = new Set(groups.filter((g) => g !== chorus && count(g) >= 2 && group.every((x, i) => x !== g || group[i + 1] === chorus)));
+  const secondChorus = chorusAt[1] ?? Infinity;
+
+  const names = new Map<number, string>();
+  let verseN = 0;
+  const label = (i: number) => {
+    const g = group[i];
+    if (g === chorus) return "Chorus";
+    if (pre.has(g)) return "Pre-Chorus";
+    if (!names.has(g)) {
+      const first = group.indexOf(g);
+      const isLastShort = i === blocks.length - 1 && blocks[i].lines.length <= 2 && count(g) === 1 && chorusAt.length >= 2;
+      if (isLastShort) names.set(g, "Tag");
+      else if (first > secondChorus) names.set(g, groups.some((x) => names.get(x) === "Bridge") ? "Bridge 2" : "Bridge");
+      else names.set(g, `Verse ${++verseN}`);
+    }
+    return names.get(g)!;
+  };
+
+  const out: string[] = [];
+  const markers: Record<string, number> = {};
+  const written = new Set<number>();
+  let n = 0;
+  const add = (name: string, t: number, lines: string[] | null) => {
+    out.push(lines ? `${name}\n${lines.join("\n")}` : name);
+    markers[n++] = Math.max(0, Math.round(t * 10) / 10);
+  };
+  if (blocks[0].start > 4) add("Intro", 0, null);
+  blocks.forEach((b, i) => {
+    if (i > 0 && b.start - blocks[i - 1].end > 12) add("Instrumental", blocks[i - 1].end + 0.5, null);
+    const g = group[i];
+    // A repeat of the chorus / pre-chorus is written as just its name (the app reuses the words).
+    const showWords = !written.has(g) || (g !== chorus && !pre.has(g) && !label(i).startsWith("Bridge"));
+    add(label(i), b.start - 0.2, showWords ? b.lines : null);
+    written.add(g);
+  });
+  if (duration - blocks[blocks.length - 1].end > 12) add("Outro", blocks[blocks.length - 1].end + 0.5, null);
+
+  return { chart: out.join("\n\n"), markers, sections: n };
+}

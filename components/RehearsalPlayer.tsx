@@ -1,5 +1,5 @@
 "use client";
-import { alignSections } from "@/lib/autosync";
+import { alignSections, chartFromTranscript } from "@/lib/autosync";
 import { createPitchShifter } from "@/lib/pitchShift";
 import { CUE_VOICES, type CueVoiceId, cueClick, cueClock, playThroughSilentSwitch, preloadCues, sayCue, unlockCues } from "@/lib/cueVoice";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -70,6 +70,7 @@ export default function RehearsalPlayer({
   hideRoadmap = false,
   onPosition,
   onPitch,
+  onChartCreated,
 }: {
   songId: string;
   chart: string;
@@ -90,6 +91,8 @@ export default function RehearsalPlayer({
   onPosition?: (pos: { n: number | null; progress: number; playing: boolean }) => void;
   /** The audio's key change in semitones, so the chart can transpose along. */
   onPitch?: (semitones: number) => void;
+  /** The AI wrote this song's lyrics/sections (Auto-sync on a song with none). */
+  onChartCreated?: (chart: string) => void;
 }) {
   const sections = useMemo(() => sectionsOf(chart), [chart]);
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -620,7 +623,17 @@ export default function RehearsalPlayer({
   const [syncing, setSyncing] = useState<string | null>(null);
   async function autoSync() {
     if (!track || syncing) return;
-    if (!sections.length) return alert("This song's chart needs its lyrics with section names first (Verse 1, Chorus…).");
+    // No lyrics (or no section names) yet: the AI writes them from the recording.
+    const create = !sections.length;
+    if (create && !canEdit) return alert("This song has no lyrics yet. A leader can tap 🤖 Auto-sync to have the AI write them.");
+    if (
+      create &&
+      !confirm(
+        (chart.trim() ? "This song's lyrics have no section names, so they'll be replaced.\n\n" : "") +
+          "The AI will listen to the song, write the lyrics, and work out the Verse / Pre-Chorus / Chorus / Bridge and where each starts.\n\nTakes about 1–2 minutes. Continue?"
+      )
+    )
+      return;
     // The vocals stem is clearest; otherwise the full mix.
     const src = tracks.find((t) => t.isStem && /vocal|vox|lead/i.test(t.name)) ?? tracks.find((t) => !t.isStem) ?? track;
     setSyncing("Sending the song…");
@@ -633,6 +646,20 @@ export default function RehearsalPlayer({
         const secs = Math.round((Date.now() - began) / 1000);
         setSyncing(`Listening to the song… ${secs}s (about 1–2 min)`);
         const st = await fetch(`/api/sync?id=${start.id}`).then((r) => r.json());
+        if (st.status === "succeeded" && create) {
+          const made = chartFromTranscript(st.segments ?? [], duration || audioRef.current?.duration || 0);
+          if (!made) throw new Error("The AI didn't hear any words in this recording. If it's an instrumental track, try the full mix or the vocals stem.");
+          const { error } = await createClient().from("songs").update({ chordpro: made.chart }).eq("id", songId);
+          if (error) throw new Error(error.message);
+          await saveMarkers(made.markers);
+          alert(
+            `🤖 Done! The AI wrote the lyrics and found ${made.sections} sections:\n\n${sectionsOf(made.chart).map((x) => x.label).join(" → ")}\n\n` +
+              "Check the words (the AI can mishear a few) and rename any section that's off, e.g. if a Verse is really a Bridge."
+          );
+          if (onChartCreated) onChartCreated(made.chart);
+          else window.location.reload();
+          break;
+        }
         if (st.status === "succeeded") {
           const { markers, found, total } = alignSections(chart, st.segments ?? [], duration || audioRef.current?.duration || 0);
           if (!found) throw new Error("The AI couldn't match any lyrics. Check the chart's words match the recording, or use ⚡ Estimate.");
@@ -979,7 +1006,7 @@ export default function RehearsalPlayer({
                       ⏱ Section times
                     </button>
                     <button onClick={autoSync} disabled={!!syncing} className={chip(!!syncing)} title="AI listens to the song and finds where each section starts">
-                      {syncing ?? "🤖 Auto-sync"}
+                      {syncing ?? (sections.length ? "🤖 Auto-sync" : "🤖 AI: write lyrics + sections")}
                     </button>
                     {marks.length > 0 && !marking && <button className="opacity-60 hover:opacity-100" onClick={clearMarkers}>Clear marks</button>}
                   </>
