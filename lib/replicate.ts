@@ -4,11 +4,17 @@ const API = "https://api.replicate.com/v1";
 const MODEL = () => process.env.REPLICATE_STEMS_MODEL || "ryan5453/demucs";
 
 function token() {
-  const t = (process.env.REPLICATE_API_TOKEN ?? "").trim();
-  if (!t)
+  // Runtime secret (Worker → Settings → Variables and Secrets). A Build variable with the same name
+  // is also accepted: it's copied in when the app is built (see next.config.mjs). Spaces are ignored.
+  const t = (process.env.REPLICATE_API_TOKEN || process.env.FW_REPLICATE_TOKEN_BUILD || "").replace(/\s+/g, "").replace(/^["']|["']$/g, "");
+  if (!t) {
+    const near = Object.keys(process.env).filter((k) => /replic|r8_|token/i.test(k) && k !== "FW_REPLICATE_TOKEN_BUILD");
     throw new Error(
-      "The AI isn't connected yet. Add REPLICATE_API_TOKEN as a Secret in Cloudflare: dash.cloudflare.com → Workers & Pages → fusion-worshipppp → Settings → Variables and Secrets → Add (type Secret), then Deploy. Get the token at replicate.com/account/api-tokens."
+      "The AI isn't connected yet: the app can't see REPLICATE_API_TOKEN." +
+        (near.length ? ` It did find: ${near.join(", ")} (the name must be exactly REPLICATE_API_TOKEN).` : "") +
+        " In Cloudflare: Workers & Pages → fusion-worshipppp → Settings → Variables and Secrets (not the Build section) → Add → type Secret → name REPLICATE_API_TOKEN → Deploy."
     );
+  }
   return t;
 }
 

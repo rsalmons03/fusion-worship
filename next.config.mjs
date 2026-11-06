@@ -18,6 +18,9 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_APP_VERSION: version(),
     NEXT_PUBLIC_BUILT_AT: new Date().toISOString(),
+    // If the Replicate token was added as a *Build* variable in Cloudflare, carry it into the server code
+    // (only used by server routes in lib/replicate.ts; never sent to browsers).
+    FW_REPLICATE_TOKEN_BUILD: process.env.REPLICATE_API_TOKEN || "",
   },
 };
 
