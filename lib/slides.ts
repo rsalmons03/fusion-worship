@@ -99,6 +99,7 @@ export const PALETTES: { id: string; name: string; colors: string[] }[] = [
 ];
 
 export const BG_STYLES: { id: string; name: string }[] = [
+  { id: "glass", name: "Stained glass" },
   { id: "bokeh", name: "Bokeh" },
   { id: "rays", name: "Light rays" },
   { id: "waves", name: "Waves" },

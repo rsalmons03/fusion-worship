@@ -155,7 +155,82 @@ const stars: Maker = (colors) => {
   };
 };
 
-const MAKERS: Record<string, Maker> = { bokeh, rays, waves, sparks, stars };
+// Stained-glass mosaic with light slowly moving through it.
+function clipHalf(poly: [number, number][], ax: number, ay: number, bx: number, by: number) {
+  // keep points closer to a than to b
+  const mx = (ax + bx) / 2, my = (ay + by) / 2, nx = bx - ax, ny = by - ay;
+  const side = (p: [number, number]) => (p[0] - mx) * nx + (p[1] - my) * ny;
+  const out: [number, number][] = [];
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i], q = poly[(i + 1) % poly.length];
+    const sp = side(p), sq = side(q);
+    if (sp <= 0) out.push(p);
+    if (sp * sq < 0) {
+      const k = sp / (sp - sq);
+      out.push([p[0] + (q[0] - p[0]) * k, p[1] + (q[1] - p[1]) * k]);
+    }
+  }
+  return out;
+}
+const glass: Maker = (colors) => {
+  // Cells in a 16:9 unit box; smaller pieces toward the middle like real windows.
+  const W = 1.78;
+  const seeds = Array.from({ length: 170 }, () => {
+    const cx = rnd(0, W), cy = rnd(0, 1);
+    return { x: cx, y: cy };
+  });
+  const cells = seeds.map((sd, i) => {
+    let poly: [number, number][] = [[0, 0], [W, 0], [W, 1], [0, 1]];
+    seeds.forEach((o, j) => {
+      if (i !== j && Math.hypot(o.x - sd.x, o.y - sd.y) < 0.6) poly = clipHalf(poly, sd.x, sd.y, o.x, o.y);
+    });
+    return { poly, x: sd.x, y: sd.y, c: colors[Math.floor(Math.random() * 3) % colors.length], tone: rnd(0.35, 1), p: rnd(0, 6) };
+  });
+  const mix = (hex: string, white: number, dark: number) => {
+    const n = parseInt(hex.slice(1), 16);
+    const ch = (v: number) => Math.round(Math.min(255, (v + (255 - v) * white) * dark));
+    return `rgb(${ch((n >> 16) & 255)},${ch((n >> 8) & 255)},${ch(n & 255)})`;
+  };
+  return (g, w, h, t) => {
+    g.globalCompositeOperation = "source-over";
+    g.fillStyle = "#050507";
+    g.fillRect(0, 0, w, h);
+    const sx = w / W, sy = h;
+    // a soft light that wanders across the window
+    const lx = W * (0.5 + 0.28 * Math.sin(t * 0.07)), ly = 0.45 + 0.2 * Math.cos(t * 0.05);
+    for (const c of cells) {
+      if (c.poly.length < 3) continue;
+      const d = Math.hypot((c.x - lx) / W, c.y - ly);
+      const light = Math.max(0, 1 - d * 1.9);
+      const shimmer = 0.85 + 0.15 * Math.sin(t * 0.9 + c.p);
+      g.fillStyle = mix(c.c, light * light * 0.85, (0.45 + 0.55 * c.tone * shimmer) * (0.55 + 0.45 * Math.max(light, 0.3)));
+      g.beginPath();
+      c.poly.forEach(([x, y], k) => (k ? g.lineTo(x * sx, y * sy) : g.moveTo(x * sx, y * sy)));
+      g.closePath();
+      g.fill();
+    }
+    // lead lines between the pieces
+    g.strokeStyle = "#0a0a0d";
+    g.lineWidth = Math.max(1.5, w / 380);
+    g.lineJoin = "round";
+    for (const c of cells) {
+      if (c.poly.length < 3) continue;
+      g.beginPath();
+      c.poly.forEach(([x, y], k) => (k ? g.lineTo(x * sx, y * sy) : g.moveTo(x * sx, y * sy)));
+      g.closePath();
+      g.stroke();
+    }
+    // glow over the glass
+    g.globalCompositeOperation = "lighter";
+    const gl = g.createRadialGradient(lx * sx, ly * sy, 0, lx * sx, ly * sy, h * 0.7);
+    gl.addColorStop(0, "rgba(255,255,255,0.18)");
+    gl.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = gl;
+    g.fillRect(0, 0, w, h);
+  };
+};
+
+const MAKERS: Record<string, Maker> = { bokeh, rays, waves, sparks, stars, glass };
 
 function CanvasBg({ style, colors }: { style: string; colors: string[] }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -240,7 +315,7 @@ export default function Background({ bg, dim }: { bg: string; dim?: number }) {
         <CanvasBg style={b.style} colors={colors} />
       )}
       {/* Darken a little so white words stay easy to read. Photos/videos need more. */}
-      <div className="absolute inset-0" style={{ background: `rgba(0,0,0,${dim ?? (b.style === "media" ? 0.4 : b.style === "flow" ? 0.3 : 0.12)})` }} />
+      <div className="absolute inset-0" style={{ background: `rgba(0,0,0,${dim ?? (b.style === "media" ? 0.4 : b.style === "flow" || b.style === "glass" ? 0.3 : 0.12)})` }} />
     </div>
   );
 }
