@@ -6,12 +6,14 @@ import { useProfile } from "@/components/ProfileContext";
 import { fmtDate } from "@/lib/format";
 import type { Song } from "@/lib/types";
 import { proToChart } from "@/lib/propresenter";
+import { normKey, readAudioTags } from "@/lib/audioTags";
 import { chordsOverLyricsToChordPro, isChordLine, parseChordPro } from "@/lib/chordpro";
 
 /** True when a chart has at least one line of words. */
 function hasLyrics(src: string | null | undefined) {
   return !!src && parseChordPro(src).some((l) => l.type === "lyrics" && l.segments.some((x) => x.text.trim()));
 }
+const AUDIO_RE = /\.(m4a|m4p|mp3|aac|wav|aif|aiff|flac|alac|m4b)$/i;
 const norm = (t: string) => t.toLowerCase().replace(/\(.*?\)/g, "").replace(/[^a-z0-9]/g, "");
 
 type Row = Pick<Song, "id" | "title" | "author" | "default_key" | "bpm" | "themes" | "archived"> & {
@@ -33,6 +35,92 @@ export default function SongsPage() {
   async function importFiles(list: FileList | null) {
     const files = Array.from(list ?? []);
     if (!files.length) return;
+    const audio = files.filter((f) => AUDIO_RE.test(f.name));
+    const other = files.filter((f) => !AUDIO_RE.test(f.name));
+    const lines: string[] = [];
+    // Keep the phone awake: uploads stop if the screen locks.
+    let lock: { release: () => Promise<void> } | null = null;
+    try {
+      lock = await (navigator as unknown as { wakeLock?: { request: (t: string) => Promise<{ release: () => Promise<void> }> } }).wakeLock?.request("screen") ?? null;
+    } catch {}
+    try {
+      if (other.length) lines.push(...(await importLyrics(other)));
+      if (audio.length) lines.push(...(await importAudio(audio)));
+    } finally {
+      lock?.release().catch(() => {});
+      setImporting("");
+      setReload((n) => n + 1);
+    }
+    alert(lines.join("\n") || "Nothing to import.");
+  }
+
+  /** iTunes / Apple Music (.m4a) and MP3 files: each one finds or creates its song and is added as that song's audio. */
+  async function importAudio(files: File[]): Promise<string[]> {
+    const supabase = createClient();
+    const drm = files.filter((f) => /\.m4p$/i.test(f.name));
+    const ok = files.filter((f) => !/\.m4p$/i.test(f.name));
+    // fresh list, so songs created by a lyrics import a moment ago are matched too
+    const { data: songRows } = await supabase.from("songs").select("id,title,author,bpm,default_key");
+    const byTitle = new Map((songRows ?? []).map((r) => [norm(r.title), r as { id: string; title: string; author: string | null; bpm: number | null; default_key: string | null }]));
+    let created = 0, attached = 0, skipped = 0;
+    const errs: string[] = [];
+    for (const [i, f] of ok.entries()) {
+      setImporting(`Song ${i + 1} of ${ok.length}…`);
+      if (f.size > 50 * 1024 * 1024) {
+        errs.push(`${f.name}: over 50 MB`);
+        continue;
+      }
+      const tags = await readAudioTags(f);
+      const title = (tags.title || f.name.replace(/\.[^.]+$/, "")).trim();
+      const key = normKey(tags.key);
+      let song = byTitle.get(norm(title));
+      if (!song) {
+        const { data, error } = await supabase
+          .from("songs")
+          .insert({ title, author: tags.artist || null, bpm: tags.bpm || null, default_key: key })
+          .select("id,title,author,bpm,default_key")
+          .single();
+        if (error || !data) {
+          errs.push(`${title}: ${error?.message ?? "couldn't create"}`);
+          continue;
+        }
+        song = data;
+        byTitle.set(norm(title), data);
+        created++;
+      } else {
+        // fill in what's missing, never overwrite
+        const patch: Record<string, unknown> = {};
+        if (!song.author && tags.artist) patch.author = tags.artist;
+        if (!song.bpm && tags.bpm) patch.bpm = tags.bpm;
+        if (!song.default_key && key) patch.default_key = key;
+        if (Object.keys(patch).length) await supabase.from("songs").update(patch).eq("id", song.id);
+      }
+      const name = tags.artist ? `${title} – ${tags.artist}` : title;
+      const { data: existing } = await supabase.from("song_files").select("id").eq("song_id", song.id).eq("name", name).limit(1);
+      if (existing?.length) {
+        skipped++;
+        continue;
+      }
+      const ext = (f.name.split(".").pop() ?? "m4a").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const path = `${song.id}/${crypto.randomUUID()}.${ext}`;
+      const up = await supabase.storage.from("charts").upload(path, f, { contentType: f.type || (ext === "mp3" ? "audio/mpeg" : "audio/mp4") });
+      if (up.error) {
+        errs.push(`${f.name}: ${up.error.message}`);
+        continue;
+      }
+      const { error } = await supabase.from("song_files").insert({ song_id: song.id, name, path });
+      if (error) errs.push(`${f.name}: ${error.message}`);
+      else attached++;
+    }
+    return [
+      attached && `🎵 Added audio to ${attached} song${attached > 1 ? "s" : ""}${created ? ` (${created} new song${created > 1 ? "s" : ""} created)` : ""}`,
+      skipped && `Skipped ${skipped} already uploaded`,
+      drm.length && `${drm.length} file${drm.length > 1 ? "s are" : " is"} copy-protected (.m4p) and can't be played outside iTunes: ${drm.slice(0, 3).map((f) => f.name).join(", ")}`,
+      errs.length && `Problems: ${errs.slice(0, 4).join("; ")}${errs.length > 4 ? "…" : ""}`,
+    ].filter(Boolean) as string[];
+  }
+
+  async function importLyrics(files: File[]): Promise<string[]> {
     setImporting(`Reading ${files.length} file${files.length > 1 ? "s" : ""}…`);
     const parsed: { title: string; chart: string; file: string }[] = [];
     const failed: string[] = [];
@@ -87,9 +175,7 @@ export default function SongsPage() {
       const { error } = await supabase.from("songs").insert(uniq.map((p) => ({ title: p.title, chordpro: p.chart })));
       if (error) errs.push(error.message);
     }
-    setImporting("");
-    setReload((n) => n + 1);
-    alert(
+    return (
       [
         fill.length && `✓ Added lyrics to ${fill.length} existing song${fill.length > 1 ? "s" : ""}`,
         replace && has.length && `✓ Replaced lyrics on ${has.length}`,
@@ -97,9 +183,7 @@ export default function SongsPage() {
         fresh.length && `✓ Created ${fresh.length} new song${fresh.length > 1 ? "s" : ""}`,
         failed.length && `Couldn't read ${failed.length}: ${failed.slice(0, 5).join(", ")}${failed.length > 5 ? "…" : ""}`,
         errs.length && `Errors: ${errs.slice(0, 3).join("; ")}`,
-      ]
-        .filter(Boolean)
-        .join("\n") || "Nothing to import."
+      ].filter(Boolean) as string[]
     );
   }
 
@@ -142,7 +226,7 @@ export default function SongsPage() {
         <span className="text-sm text-muted">{shown.length} songs</span>
         {me.isLeader && (
           <div className="ml-auto flex flex-wrap gap-2">
-            <label className={`btn-secondary cursor-pointer ${importing ? "pointer-events-none opacity-60" : ""}`} title="ProPresenter (.pro), ChordPro or plain-text lyrics. Pick many at once.">
+            <label className={`btn-secondary cursor-pointer ${importing ? "pointer-events-none opacity-60" : ""}`} title="iTunes / MP3 songs, ProPresenter (.pro), ChordPro or text lyrics. Pick many at once.">
               {importing || "📥 Import songs"}
               <input type="file" multiple hidden onChange={(e) => { importFiles(e.target.files); e.target.value = ""; }} />
             </label>
@@ -154,7 +238,7 @@ export default function SongsPage() {
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           <b>{missing === 1 ? "1 song has" : `${missing} songs have`} no lyrics yet</b>, so {missing === 1 ? "it won't" : "they won't"} show on the lyrics screen or give section cues.{" "}
           <button className="font-semibold underline" onClick={() => setMissingOnly(!missingOnly)}>{missingOnly ? "Show all songs" : "Show which"}</button>
-          <div className="mt-1 text-amber-800">Tip: tap 📥 Import songs and select all your ProPresenter .pro files at once.</div>
+          <div className="mt-1 text-amber-800">Tip: 📥 Import songs takes your ProPresenter .pro files and your iTunes songs (.m4a / .mp3), all at once.</div>
         </div>
       )}
       <div className="flex flex-wrap gap-3">
