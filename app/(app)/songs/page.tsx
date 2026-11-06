@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useProfile } from "@/components/ProfileContext";
 import { fmtDate } from "@/lib/format";
 import type { Song } from "@/lib/types";
-import { proToChart } from "@/lib/propresenter";
+import { pro6ToChart, proToChart } from "@/lib/propresenter";
 import { normKey, readAudioTags } from "@/lib/audioTags";
 import { chordsOverLyricsToChordPro, isChordLine, parseChordPro } from "@/lib/chordpro";
 
@@ -127,6 +127,12 @@ export default function SongsPage() {
     for (const f of files) {
       const base = f.name.replace(/\.[^.]+$/, "").replace(/[_]+/g, " ").trim();
       try {
+        if (/\.pro[56]$/i.test(f.name)) {
+          const res = pro6ToChart(await f.text());
+          if (res && hasLyrics(res.chart)) parsed.push({ title: res.title?.trim() || base, chart: res.chart, file: f.name });
+          else failed.push(f.name);
+          continue;
+        }
         if (/\.pro$/i.test(f.name) || !/\.(txt|cho|chopro|chordpro|crd)$/i.test(f.name)) {
           const res = proToChart(new Uint8Array(await f.arrayBuffer()));
           if (res && hasLyrics(res.chart)) {
@@ -226,29 +232,26 @@ export default function SongsPage() {
         <span className="text-sm text-muted">{shown.length} songs</span>
         {me.isLeader && (
           <div className="ml-auto flex flex-wrap gap-2">
-            <label className={`btn-secondary cursor-pointer ${importing ? "pointer-events-none opacity-60" : ""}`} title="iTunes / Apple Music (.m4a) or MP3 song files. Pick many at once.">
-              {importing || "🎵 Add iTunes / MP3 songs"}
-              <input type="file" multiple hidden accept=".m4a,.mp3,.aac,.wav,.aif,.aiff,.flac,.m4p,audio/*" onChange={(e) => { importFiles(e.target.files); e.target.value = ""; }} />
-            </label>
-            <label className={`btn-secondary cursor-pointer ${importing ? "pointer-events-none opacity-60" : ""}`} title="ProPresenter (.pro), ChordPro or text lyrics. Pick many at once.">
-              📥 Import lyrics
+            <label className={`btn cursor-pointer ${importing ? "pointer-events-none opacity-60" : ""}`} title="Music (iTunes .m4a, MP3) and ProPresenter (.pro, .pro6) files, together. Pick many at once.">
+              {importing || "📥 Import songs (music + ProPresenter)"}
               <input type="file" multiple hidden onChange={(e) => { importFiles(e.target.files); e.target.value = ""; }} />
             </label>
-            <Link href="/songs/new" className="btn">+ New song</Link>
+            <Link href="/songs/new" className="btn-secondary">+ New song</Link>
           </div>
         )}
       </div>
       {me.isLeader && (
         <p className="text-xs text-muted">
-          <b>🎵 Add iTunes / MP3 songs:</b> pick your song files (.m4a or .mp3) and each one is matched to its song (or added) with the name, artist, BPM and key filled in, ready to play.
-          Use the computer that has iTunes: the files are in <i>Music › iTunes › iTunes Media › Music</i> (Windows) or <i>Music › Music › Media › Music</i> (Mac). iPhone music can&apos;t be picked from a web page.
+          <b>📥 Import songs:</b> select your music files (iTunes .m4a or .mp3) <b>and</b> ProPresenter files (.pro / .pro6), all together. Files for the same song are joined up:
+          the ProPresenter file gives the lyrics and sections (Verse 1, Chorus…), the music file gives the audio, artist, BPM and key.
+          iTunes music is in <i>Music › iTunes › iTunes Media › Music</i> (Windows) or <i>Music › Music › Media › Music</i> (Mac); ProPresenter songs are in <i>Documents › ProPresenter › Libraries</i>.
         </p>
       )}
       {me.isLeader && missing > 0 && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           <b>{missing === 1 ? "1 song has" : `${missing} songs have`} no lyrics yet</b>, so {missing === 1 ? "it won't" : "they won't"} show on the lyrics screen or give section cues.{" "}
           <button className="font-semibold underline" onClick={() => setMissingOnly(!missingOnly)}>{missingOnly ? "Show all songs" : "Show which"}</button>
-          <div className="mt-1 text-amber-800">Tip: 📥 Import lyrics takes your ProPresenter .pro files (select them all at once).</div>
+          <div className="mt-1 text-amber-800">Tip: 📥 Import songs takes your ProPresenter .pro files (select them all at once).</div>
         </div>
       )}
       <div className="flex flex-wrap gap-3">

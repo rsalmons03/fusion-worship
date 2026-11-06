@@ -90,3 +90,44 @@ export function proToChart(bytes: Uint8Array): { title: string | null; chart: st
   const title = tm ? head.substr(tm.index + tm[0].length, tm[1].charCodeAt(0)).replace(/[\u2018\u2019]/g, "'").trim() || null : null;
   return { title, chart };
 }
+
+// ── ProPresenter 5/6 (.pro6 / .pro5): XML with each slide's text as base64 (plain text or RTF) ──
+function b64(s: string) {
+  try {
+    const bin = atob(s.replace(/\s+/g, ""));
+    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    return new TextDecoder("utf-8").decode(bytes);
+  } catch {
+    return "";
+  }
+}
+const xmlAttr = (tag: string, name: string) => tag.match(new RegExp(`\\b${name}="([^"]*)"`))?.[1]?.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">") ?? "";
+
+/** Lyrics and sections from a ProPresenter 5/6 song file. */
+export function pro6ToChart(xml: string): { title: string | null; chart: string } | null {
+  if (!/<RVPresentationDocument/i.test(xml)) return null;
+  const docTag = xml.match(/<RVPresentationDocument[^>]*>/i)?.[0] ?? "";
+  const title = xmlAttr(docTag, "CCLISongTitle") || null;
+  const parts = xml.split(/<RVSlideGrouping\b/i).slice(1);
+  const out: string[] = [];
+  for (const part of parts) {
+    const name = xmlAttr(part.slice(0, part.indexOf(">")), "name").trim();
+    const slides = part.split(/<RVDisplaySlide\b/i).slice(1);
+    const lines: string[] = [];
+    for (const sl of slides) {
+      let text = "";
+      const plain = sl.match(/rvXMLIvarName="PlainText"[^>]*>([^<]*)</i)?.[1];
+      if (plain) text = b64(plain);
+      if (!text.trim()) {
+        const rtf = sl.match(/rvXMLIvarName="RTFData"[^>]*>([^<]*)</i)?.[1] ?? sl.match(/\bRTFData="([^"]*)"/i)?.[1];
+        if (rtf) text = rtfToLines(b64(rtf)).join("\n");
+      }
+      for (const l of text.replace(/\r\n?|\u2028|\u2029/g, "\n").split("\n")) if (l.trim()) lines.push(l.trim());
+      if (slides.length > 1) lines.push("");
+    }
+    while (lines.length && !lines[lines.length - 1]) lines.pop();
+    if (!lines.length) continue;
+    out.push(`${name || "Verse"}\n${lines.filter((l, i) => l || (lines[i - 1] ?? "") !== "").join("\n")}`);
+  }
+  return out.length ? { title, chart: out.join("\n\n") } : null;
+}
