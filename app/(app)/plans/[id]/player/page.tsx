@@ -38,7 +38,11 @@ export default function SetPlayerPage() {
   // Lyrics screen: when "follow" is on, the slides change by themselves as the track plays.
   const screen = useScreenSync(params.id);
   const [pos, setPos] = useState<{ n: number | null; progress: number } | null>(null);
-  useEffect(() => setPos(null), [idx]);
+  const [audioPitch, setAudioPitch] = useState(0);
+  useEffect(() => {
+    setPos(null);
+    setAudioPitch(0);
+  }, [idx]);
   const { slides } = usePlanSlides(params.id, screen.state.lines);
 
   useEffect(() => {
@@ -87,7 +91,7 @@ export default function SetPlayerPage() {
     );
 
   const key = item.song_key || song?.default_key || "";
-  const semis = semitonesBetween(song?.default_key, key);
+  const semis = (semitonesBetween(song?.default_key, key) + audioPitch + 12) % 12;
   const groups: [string, FileRow[]][] = [
     ["Charts", files.filter((f) => fileExt(f.path) === "pdf")],
     ["Audio", files.filter((f) => isAudio(f.path))],
@@ -158,6 +162,7 @@ export default function SetPlayerPage() {
             onPrevSong={() => go(idx - 1, false)}
             onNextSong={(playing) => go(idx + 1, playing)}
             hideRoadmap={tab !== "Chart" && tab !== "Lyrics"}
+            onPitch={setAudioPitch}
             onPosition={(pos) => {
               setPos(pos.n === null ? null : { n: pos.n, progress: pos.progress });
               const st = screen.state;

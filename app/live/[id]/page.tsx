@@ -26,7 +26,11 @@ export default function LiveView() {
   const [numbers, setNumbers] = useState(false);
   const [listen, setListen] = useState(false);
   const [pos, setPos] = useState<{ n: number | null; progress: number } | null>(null);
-  useEffect(() => setPos(null), [idx]);
+  const [audioPitch, setAudioPitch] = useState(0);
+  useEffect(() => {
+    setPos(null);
+    setAudioPitch(0);
+  }, [idx]);
 
   useEffect(() => {
     try {
@@ -70,7 +74,7 @@ export default function LiveView() {
   const planKey = item?.song_key || baseKey;
   const extra = item ? shift[item.id] ?? 0 : 0;
   const shownKey = planKey ? transposeKey(planKey, extra) : "";
-  const semis = baseKey && planKey ? (semitonesBetween(baseKey, planKey) + extra + 12) % 12 : 0;
+  const semis = ((baseKey && planKey ? semitonesBetween(baseKey, planKey) : 0) + extra + audioPitch + 120) % 12;
 
   const theme = dark ? "bg-black text-stone-100" : "bg-white text-ink";
   const bar = dark ? "border-stone-800 bg-stone-950" : "border-line bg-stone-50";
@@ -134,7 +138,7 @@ export default function LiveView() {
           )}
           {item.description && <p className="mb-4 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">{item.description}</p>}
           {item.songs && item.song_id && (
-            <RehearsalPlayer key={item.song_id} songId={item.song_id} chart={item.songs.chordpro} canEdit={false} dark={dark} bottomOffset={60} bpm={item.songs.bpm} onPosition={(p) => setPos(p.n === null ? null : { n: p.n, progress: p.progress })} />
+            <RehearsalPlayer key={item.song_id} songId={item.song_id} chart={item.songs.chordpro} canEdit={false} dark={dark} bottomOffset={60} bpm={item.songs.bpm} onPitch={setAudioPitch} onPosition={(p) => setPos(p.n === null ? null : { n: p.n, progress: p.progress })} />
           )}
           {item.songs ? (
             <ChordSheet source={item.songs.chordpro} semis={semis} flats={prefersFlats(shownKey)} showChords={chords} fontSize={size} dark={dark} numbersKey={numbers ? item.songs.default_key : null} follow={pos} />

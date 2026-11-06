@@ -1,4 +1,6 @@
 "use client";
+import { alignSections } from "@/lib/autosync";
+import { createPitchShifter } from "@/lib/pitchShift";
 import { CUE_VOICES, type CueVoiceId, cueClick, cueClock, playThroughSilentSwitch, preloadCues, sayCue, unlockCues } from "@/lib/cueVoice";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -67,6 +69,7 @@ export default function RehearsalPlayer({
   title,
   hideRoadmap = false,
   onPosition,
+  onPitch,
 }: {
   songId: string;
   chart: string;
@@ -85,6 +88,8 @@ export default function RehearsalPlayer({
   hideRoadmap?: boolean;
   /** Reports where playback is: the section number (null before the first) and how far through it (0–1). */
   onPosition?: (pos: { n: number | null; progress: number; playing: boolean }) => void;
+  /** The audio's key change in semitones, so the chart can transpose along. */
+  onPitch?: (semitones: number) => void;
 }) {
   const sections = useMemo(() => sectionsOf(chart), [chart]);
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -313,27 +318,72 @@ export default function RehearsalPlayer({
   };
 
   // Web Audio graph so each stem has its own volume (phones ignore <audio>.volume).
-  const graph = useRef<{ ctx: AudioContext; gains: Map<string, GainNode> } | null>(null);
+  // Everything goes into `master`, then (when the key is changed) through the pitch shifter.
+  const graph = useRef<{ ctx: AudioContext; gains: Map<string, GainNode>; master: GainNode; shifter: AudioWorkletNode | null } | null>(null);
   const [graphReady, setGraphReady] = useState(0);
-  const ensureGraph = useCallback(() => {
-    if (!useStems) return;
-    if (!graph.current) {
-      try {
-        const ctx = newAudioContext();
-        const gains = new Map<string, GainNode>();
-        stemEls.current.forEach((el, id) => {
-          const g = ctx.createGain();
-          ctx.createMediaElementSource(el).connect(g).connect(ctx.destination);
-          gains.set(id, g);
-        });
-        graph.current = { ctx, gains };
-        setGraphReady((n) => n + 1);
-      } catch {
-        graph.current = null;
+  // Key change in semitones (−6…+6), like Moises. Only the audio; the chart follows via onPitch.
+  const [pitch, setPitch] = useState(0);
+  const ensureGraph = useCallback(
+    (force = false) => {
+      if (!useStems && !pitch && !force) return;
+      if (!graph.current) {
+        try {
+          const ctx = newAudioContext();
+          const master = ctx.createGain();
+          master.connect(ctx.destination);
+          const gains = new Map<string, GainNode>();
+          const els: [string, HTMLAudioElement][] = useStems ? [...stemEls.current.entries()] : audioRef.current ? [["main", audioRef.current]] : [];
+          els.forEach(([id, el]) => {
+            const g = ctx.createGain();
+            ctx.createMediaElementSource(el).connect(g).connect(master);
+            gains.set(id, g);
+          });
+          graph.current = { ctx, gains, master, shifter: null };
+          setGraphReady((n) => n + 1);
+        } catch {
+          graph.current = null;
+        }
       }
-    }
-    graph.current?.ctx.resume().catch(() => {});
-  }, [useStems]);
+      graph.current?.ctx.resume().catch(() => {});
+    },
+    [useStems, pitch]
+  );
+  useEffect(() => {
+    const g = graph.current;
+    if (!g) return;
+    let cancelled = false;
+    (async () => {
+      if (pitch && !g.shifter) {
+        g.shifter = await createPitchShifter(g.ctx);
+        if (!g.shifter && !cancelled) {
+          alert("This browser can't change the key. Try the latest Safari or Chrome.");
+          setPitch(0);
+          return;
+        }
+      }
+      if (cancelled || graph.current !== g) return;
+      g.master.disconnect();
+      if (pitch && g.shifter) {
+        g.shifter.parameters.get("semitones")?.setValueAtTime(pitch, g.ctx.currentTime);
+        g.master.connect(g.shifter);
+        g.shifter.disconnect();
+        g.shifter.connect(g.ctx.destination);
+      } else g.master.connect(g.ctx.destination);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pitch, graphReady]);
+  const pitchCb = useRef(onPitch);
+  pitchCb.current = onPitch;
+  useEffect(() => pitchCb.current?.(pitch), [pitch]);
+  function changePitch(d: number) {
+    const next = Math.max(-6, Math.min(6, pitch + d));
+    if (next === pitch) return;
+    unlockCues();
+    if (next && !graph.current) ensureGraph(true); // built inside the tap so phones allow it
+    setPitch(next);
+  }
 
   // New set of stems (not just new markers): tear down the old graph.
   const stemKey = stems.map((s) => s.id + s.url).join();
@@ -342,7 +392,7 @@ export default function RehearsalPlayer({
       graph.current?.ctx.close().catch(() => {});
       graph.current = null;
     };
-  }, [useStems, stemKey]);
+  }, [useStems, stemKey, track?.id]);
 
   const anySolo = stems.some((s) => mix[s.id]?.solo);
   const level = useCallback(
@@ -390,8 +440,14 @@ export default function RehearsalPlayer({
   }, [time, current, playing, sectionRange]);
 
   useEffect(() => {
-    if (audioRef.current) audioRef.current.playbackRate = rate;
-    stemEls.current.forEach((el) => (el.playbackRate = rate));
+    // Slower/faster without changing pitch (the key control does that separately).
+    const set = (el: HTMLAudioElement) => {
+      (el as HTMLAudioElement & { webkitPreservesPitch?: boolean }).webkitPreservesPitch = true;
+      el.preservesPitch = true;
+      el.playbackRate = rate;
+    };
+    if (audioRef.current) set(audioRef.current);
+    stemEls.current.forEach(set);
   }, [rate, track, useStems]);
 
   useEffect(() => {
@@ -560,6 +616,41 @@ export default function RehearsalPlayer({
     if (error) alert(/markers/.test(error.message) ? "Section times need the database update (run ALL_UPDATES.sql in Supabase). " + error.message : error.message);
   }
 
+  // ── Auto-sync (AI): listen to the song, match the words to the chart, save the section times ──
+  const [syncing, setSyncing] = useState<string | null>(null);
+  async function autoSync() {
+    if (!track || syncing) return;
+    if (!sections.length) return alert("This song's chart needs its lyrics with section names first (Verse 1, Chorus…).");
+    // The vocals stem is clearest; otherwise the full mix.
+    const src = tracks.find((t) => t.isStem && /vocal|vox|lead/i.test(t.name)) ?? tracks.find((t) => !t.isStem) ?? track;
+    setSyncing("Sending the song…");
+    try {
+      const start = await fetch("/api/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fileId: src.id }) }).then((r) => r.json());
+      if (!start.id) throw new Error(start.error ?? "Couldn't start");
+      const began = Date.now();
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 4000));
+        const secs = Math.round((Date.now() - began) / 1000);
+        setSyncing(`Listening to the song… ${secs}s (about 1–2 min)`);
+        const st = await fetch(`/api/sync?id=${start.id}`).then((r) => r.json());
+        if (st.status === "succeeded") {
+          const { markers, found, total } = alignSections(chart, st.segments ?? [], duration || audioRef.current?.duration || 0);
+          if (!found) throw new Error("The AI couldn't match any lyrics. Check the chart's words match the recording, or use ⚡ Estimate.");
+          await saveMarkers(markers);
+          setShowTimes(true);
+          alert(`🤖 Synced: found ${found} of ${total} sections by their words${found < total ? "; the rest were placed between them" : ""}.\n\nCheck them in ⏱ Section times (▶ next to each plays from there) and nudge any that are off.`);
+          break;
+        }
+        if (st.status === "failed" || st.status === "canceled" || st.error) throw new Error(st.error ?? st.status);
+        if (Date.now() - began > 8 * 60 * 1000) throw new Error("Took too long. Try again in a minute.");
+      }
+    } catch (e) {
+      alert("Auto-sync: " + (e as Error).message);
+    } finally {
+      setSyncing(null);
+    }
+  }
+
   /** Spread the sections across the song by how many lyric lines each has (a repeat uses its first time's length). */
   function estimateMarkers() {
     if (Object.keys(guess).length) saveMarkers(guess);
@@ -677,6 +768,9 @@ export default function RehearsalPlayer({
                   <button className="rounded-sm bg-accent px-2 py-1 font-bold text-white" onClick={estimateMarkers} disabled={!duration} title="Spread sections across the song by lyric length">
                     ⚡ Estimate
                   </button>
+                  <button className="rounded-sm bg-ink px-2 py-1 font-bold text-white disabled:opacity-60" onClick={autoSync} disabled={!!syncing} title="AI listens to the song and finds where each section starts">
+                    {syncing ? "🤖 Listening…" : "🤖 Auto-sync (AI)"}
+                  </button>
                   <button className="opacity-70" onClick={() => setShowTimes(false)}>Done</button>
                 </div>
                 <ul className="space-y-1">
@@ -749,7 +843,7 @@ export default function RehearsalPlayer({
 
             {/* Audio elements */}
             {track && !useStems && (
-              <audio ref={audioRef} src={track.url} preload="metadata" loop={loop === "song"} {...masterEvents} />
+              <audio key={track.id} ref={audioRef} src={track.url} crossOrigin="anonymous" preload="metadata" loop={loop === "song"} {...masterEvents} />
             )}
             {useStems && (
               <div key={stemKey}>
@@ -813,8 +907,13 @@ export default function RehearsalPlayer({
                   {loop === "off" ? "Loop" : loop === "song" ? "Loop song" : "Loop section"}
                 </button>
                 <select aria-label="Speed" value={rate} onChange={(e) => setRate(Number(e.target.value))} className="rounded-sm border border-current/20 bg-transparent px-1 py-0.5">
-                  {[0.5, 0.75, 0.9, 1].map((r) => <option key={r} value={r} className="text-ink">{r === 1 ? "1× speed" : `${r}×`}</option>)}
+                  {[0.5, 0.75, 0.9, 1, 1.1, 1.25].map((r) => <option key={r} value={r} className="text-ink">{r === 1 ? "1× speed" : `${r}×`}</option>)}
                 </select>
+                <span className="inline-flex items-center rounded-sm border border-current/20" title="Change the song's key (the chart's chords move with it)">
+                  <button onClick={() => changePitch(-1)} className="px-1.5 py-0.5 font-bold" aria-label="Key down">−</button>
+                  <span className={`min-w-[3.6rem] text-center ${pitch ? "font-bold text-accent" : ""}`}>Key {pitch > 0 ? `+${pitch}` : pitch || "0"}</span>
+                  <button onClick={() => changePitch(1)} className="px-1.5 py-0.5 font-bold" aria-label="Key up">+</button>
+                </span>
                 {bpm ? (
                   <button onClick={() => setClick(!click)} className={chip(click)} title="Metronome">
                     ♩ {bpm}
@@ -878,6 +977,9 @@ export default function RehearsalPlayer({
                       className={chip(showTimes)}
                     >
                       ⏱ Section times
+                    </button>
+                    <button onClick={autoSync} disabled={!!syncing} className={chip(!!syncing)} title="AI listens to the song and finds where each section starts">
+                      {syncing ?? "🤖 Auto-sync"}
                     </button>
                     {marks.length > 0 && !marking && <button className="opacity-60 hover:opacity-100" onClick={clearMarkers}>Clear marks</button>}
                   </>

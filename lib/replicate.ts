@@ -52,3 +52,25 @@ export function stemUrls(output: unknown): [string, string][] {
 
 const PRETTY: Record<string, string> = { vocals: "Vocals", drums: "Drums", bass: "Bass", guitar: "Guitar", piano: "Keys", other: "Other" };
 export const stemLabel = (k: string) => PRETTY[k.toLowerCase()] ?? k.charAt(0).toUpperCase() + k.slice(1);
+
+// ── Auto-sync: speech-to-text with timings (Whisper) to find where each section starts ──
+const WHISPER = () => process.env.REPLICATE_WHISPER_MODEL || "openai/whisper";
+
+export async function startTranscribe(audioUrl: string): Promise<Prediction> {
+  const model = await call(`/models/${WHISPER()}`);
+  const version = model?.latest_version?.id;
+  if (!version) throw new Error(`Couldn't find the speech model ${WHISPER()} on Replicate.`);
+  return call(`/predictions`, {
+    method: "POST",
+    body: JSON.stringify({ version, input: { audio: audioUrl, model: "large-v3", language: "en", transcription: "plain text", condition_on_previous_text: false } }),
+  });
+}
+
+export type Segment = { start: number; end: number; text: string };
+/** Timed lines from a finished transcription, whatever shape the model returns. */
+export function segmentsOf(output: unknown): Segment[] {
+  const o = output as { segments?: { start: number; end: number; text: string }[]; chunks?: { timestamp: [number, number]; text: string }[] } | null;
+  if (o?.segments) return o.segments.map((s) => ({ start: +s.start, end: +s.end, text: String(s.text ?? "") }));
+  if (o?.chunks) return o.chunks.map((c) => ({ start: +c.timestamp[0], end: +(c.timestamp[1] ?? c.timestamp[0]), text: String(c.text ?? "") }));
+  return [];
+}
