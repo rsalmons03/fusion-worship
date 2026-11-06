@@ -4,7 +4,7 @@
 
 const UUID = /[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}/g;
 const GROUP =
-  /(?<=[\x00-\x20"])((?:pre-?)?chorus(?: ?\d+)?|verse(?: ?\d+)?|bridge(?: ?\d+)?|tag(?: ?\d+)?|intro|outro|ending|interlude|instrumental|vamp|turnaround|refrain|coda)(?=[^A-Za-z])/gi;
+  /(?<=[\x00-\x20"])((?:(?:pre|post)-?\s?|(?:down|big|last|final|half) )?chorus(?: ?\d+)?|verse(?: ?\d+)?|bridge(?: ?\d+)?|build(?: ?\d+)?|breakdown|tag(?: ?\d+)?|intro|outro|ending|interlude|instrumental|vamp|turnaround|refrain|coda|hook|solo|spontaneous|exhort|reprise)(?=[^A-Za-z])/gi;
 
 function latin1(bytes: Uint8Array) {
   let s = "";

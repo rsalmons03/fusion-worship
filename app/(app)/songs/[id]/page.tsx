@@ -259,7 +259,7 @@ export default function SongPage() {
               </div>
               <button className="btn-ghost" onClick={() => window.print()}>Print</button>
             </div>
-            <RehearsalPlayer key={filesVersion} songId={params.id} chart={song.chordpro} canEdit={canEdit} bpm={song.bpm} onPitch={setAudioPitch} onChartCreated={(chordpro) => setSong((s) => ({ ...s, chordpro }))} onPosition={(p) => setPos(p.n === null ? null : { n: p.n, progress: p.progress })} />
+            <RehearsalPlayer key={filesVersion} songId={params.id} chart={song.chordpro} canEdit={canEdit} bpm={song.bpm} meter={song.meter} onPitch={setAudioPitch} onChartCreated={(chordpro) => setSong((s) => ({ ...s, chordpro }))} onPosition={(p) => setPos(p.n === null ? null : { n: p.n, progress: p.progress })} />
             <ChordSheet source={song.chordpro} semis={semis} flats={flats} showChords={view !== "lyrics"} numbersKey={view === "numbers" ? song.default_key : null} follow={pos} />
           </div>
           <aside className="space-y-4">

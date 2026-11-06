@@ -157,6 +157,7 @@ export default function SetPlayerPage() {
             chart={song.chordpro}
             canEdit={me.isLeader}
             bpm={song.bpm}
+            meter={song.meter}
             autoPlay={autoPlay}
             title={`${idx + 1}. ${song.title}`}
             onPrevSong={() => go(idx - 1, false)}

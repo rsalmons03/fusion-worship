@@ -78,7 +78,7 @@ export type SheetLine =
   | { type: "empty" };
 
 const SECTION_RE =
-  /^(verse|chorus|pre-?chorus|bridge|intro|outro|tag|interlude|ending|instrumental|refrain|turnaround|vamp|coda)(\s*\d+)?\s*(\(.*\))?\s*:?\s*$/i;
+  /^((?:(?:down|big|last|final|half|quiet)\s+)?chorus|pre-?\s?chorus|post-?\s?chorus|verse|bridge|build|breakdown|break|intro|outro|tag|interlude|ending|instrumental|refrain|turnaround|vamp|coda|hook|solo|spontaneous|exhort(?:ation)?|reprise|rap|swell|a\s?cappella|drums\s+only|hold|key\s+change)(\s*\d+)?\s*(x\s*\d+|\d+\s*x)?\s*(\(.*\))?\s*:?\s*$/i;
 
 const START_DIRECTIVES: Record<string, string> = {
   start_of_chorus: "Chorus",
@@ -232,8 +232,27 @@ export function chordsInKey(key: string | null | undefined): string[] {
 export type SectionInfo = { n: number; label: string; abbr: string; kind: string };
 
 const ABBR: [RegExp, string, string][] = [
-  [/^pre-?chorus/i, "PC", "prechorus"],
+  [/^pre-?\s?chorus/i, "PC", "prechorus"],
+  [/^post-?\s?chorus/i, "PoC", "chorus"],
+  [/^down\s+chorus/i, "DC", "chorus"],
+  [/^big\s+chorus/i, "BC", "chorus"],
+  [/^(last|final)\s+chorus/i, "LC", "chorus"],
+  [/^(half|quiet)\s+chorus/i, "½C", "chorus"],
   [/^chorus/i, "C", "chorus"],
+  [/^build/i, "Bld", "bridge"],
+  [/^breakdown/i, "BkD", "inst"],
+  [/^break/i, "Brk", "inst"],
+  [/^hook/i, "H", "chorus"],
+  [/^solo/i, "So", "inst"],
+  [/^spontaneous/i, "Sp", "bridge"],
+  [/^exhort/i, "Ex", "inst"],
+  [/^reprise/i, "Rp", "chorus"],
+  [/^rap/i, "Rap", "verse"],
+  [/^swell/i, "Sw", "inst"],
+  [/^a\s?cappella/i, "Ac", "verse"],
+  [/^drums\s+only/i, "Dr", "inst"],
+  [/^hold/i, "Hd", "inst"],
+  [/^key\s+change/i, "KC", "inst"],
   [/^verse/i, "V", "verse"],
   [/^bridge/i, "B", "bridge"],
   [/^tag/i, "Tg", "tag"],
@@ -256,7 +275,7 @@ export function sectionsOf(src: string): SectionInfo[] {
     if (l.type !== "section") continue;
     const label = l.label;
     const hit = ABBR.find(([re]) => re.test(label.trim()));
-    const num = label.match(/(\d+)/)?.[1] ?? "";
+    const num = label.replace(/\(.*?\)/g, "").replace(/x\s*\d+|\d+\s*x/gi, "").match(/(\d+)/)?.[1] ?? "";
     const abbr = hit ? hit[1] + num : label.replace(/[^A-Za-z0-9]/g, "").slice(0, 3);
     out.push({ n: n++, label, abbr, kind: hit?.[2] ?? "other" });
   }

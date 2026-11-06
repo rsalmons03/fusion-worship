@@ -138,7 +138,7 @@ export default function LiveView() {
           )}
           {item.description && <p className="mb-4 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">{item.description}</p>}
           {item.songs && item.song_id && (
-            <RehearsalPlayer key={item.song_id} songId={item.song_id} chart={item.songs.chordpro} canEdit={false} dark={dark} bottomOffset={60} bpm={item.songs.bpm} onPitch={setAudioPitch} onPosition={(p) => setPos(p.n === null ? null : { n: p.n, progress: p.progress })} />
+            <RehearsalPlayer key={item.song_id} songId={item.song_id} chart={item.songs.chordpro} canEdit={false} dark={dark} bottomOffset={60} bpm={item.songs.bpm} meter={item.songs.meter} onPitch={setAudioPitch} onPosition={(p) => setPos(p.n === null ? null : { n: p.n, progress: p.progress })} />
           )}
           {item.songs ? (
             <ChordSheet source={item.songs.chordpro} semis={semis} flats={prefersFlats(shownKey)} showChords={chords} fontSize={size} dark={dark} numbersKey={numbers ? item.songs.default_key : null} follow={pos} />

@@ -1,7 +1,8 @@
 "use client";
 import { alignSections, chartFromTranscript } from "@/lib/autosync";
+import { detectTempo, snapToBeat, type Tempo } from "@/lib/tempo";
 import { createPitchShifter } from "@/lib/pitchShift";
-import { CUE_VOICES, type CueVoiceId, cueClick, cueClock, playThroughSilentSwitch, preloadCues, sayCue, unlockCues } from "@/lib/cueVoice";
+import { CUE_VOICES, type CueVoiceId, cueClick, cueClock, cueLength, playThroughSilentSwitch, preloadCues, sayCue, unlockCues } from "@/lib/cueVoice";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { parseChordPro, sectionsOf, type SectionInfo } from "@/lib/chordpro";
@@ -66,6 +67,7 @@ export default function RehearsalPlayer({
   onNextSong,
   autoPlay = false,
   bpm,
+  meter,
   title,
   hideRoadmap = false,
   onPosition,
@@ -84,6 +86,8 @@ export default function RehearsalPlayer({
   autoPlay?: boolean;
   /** Song tempo for the metronome and voice-cue timing. */
   bpm?: number | null;
+  /** Time signature like "4/4", "3/4", "6/8" (beats counted per bar). */
+  meter?: string | null;
   /** Shown in the player bar (set player). */
   title?: string;
   hideRoadmap?: boolean;
@@ -109,6 +113,8 @@ export default function RehearsalPlayer({
   const stemEls = useRef<Map<string, HTMLAudioElement>>(new Map());
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [peaks, setPeaks] = useState<number[] | null>(null);
+  // Tempo and beat grid heard in the recording (used when the song has no BPM entered).
+  const [tempo, setTempo] = useState<Tempo | null>(null);
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -118,14 +124,26 @@ export default function RehearsalPlayer({
   const [open, setOpen] = useState(true);
   const [showMixer, setShowMixer] = useState(false);
   const [showTimes, setShowTimes] = useState(false);
-  const [cues, setCues] = useState(false);
-  // Count-in before the song starts: "3, 2, 1" (default), "1, 2, 3, 4", or off. Remembered on this device.
-  const [countIn, setCountIn] = useState<"321" | "1234" | "off">("321");
+  // Guide cues on by default (remembered per device).
+  const [cues, setCuesState] = useState(true);
+  const setCues = (on: boolean) => {
+    setCuesState(on);
+    try {
+      localStorage.setItem("fw.cues", on ? "1" : "0");
+    } catch {}
+  };
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("fw.cues") === "0") setCuesState(false);
+    } catch {}
+  }, []);
+  // Optional count BEFORE pressing play starts the music (off by default: the guide counts in on the music itself).
+  const [countIn, setCountIn] = useState<"321" | "1234" | "off">("off");
   const [counting, setCounting] = useState<string | null>(null);
   const countAbort = useRef<(() => void) | null>(null);
   useEffect(() => {
     try {
-      const v = localStorage.getItem("fw.countin");
+      const v = localStorage.getItem("fw.countin2");
       if (v === "321" || v === "1234" || v === "off") setCountIn(v);
     } catch {}
   }, []);
@@ -152,7 +170,7 @@ export default function RehearsalPlayer({
   const chooseCountIn = (v: "321" | "1234" | "off") => {
     setCountIn(v);
     try {
-      localStorage.setItem("fw.countin", v);
+      localStorage.setItem("fw.countin2", v);
     } catch {}
   };
 
@@ -189,6 +207,7 @@ export default function RehearsalPlayer({
   const trackUrl = track?.url;
   useEffect(() => {
     setPeaks(null);
+    setTempo(null);
     setTime(0);
     setPlaying(false);
     if (!trackUrl) return;
@@ -209,6 +228,14 @@ export default function RehearsalPlayer({
         }
         const top = Math.max(...p) || 1;
         if (alive) setPeaks(p.map((x) => x / top));
+        // Find the tempo and beat grid in the background.
+        setTimeout(() => {
+          if (!alive) return;
+          try {
+            const t = detectTempo(data, audio.sampleRate);
+            if (alive && t) setTempo(t);
+          } catch {}
+        }, 50);
         ctx.close();
       } catch {
         if (alive) setPeaks([]); // waveform is optional; playback still works
@@ -457,24 +484,70 @@ export default function RehearsalPlayer({
     if (autoPlay && track) play();
   }, [autoPlay, track]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Voice cues: say the section name one bar before it starts ──
+  // ── Guide cues, like a MultiTracks guide track: in the bar before each section, on the beat,
+  //    "Chorus … 2, 3, 4" (the name on beat 1, then the count), so the band comes in together. ──
   const spoken = useRef<Set<number>>(new Set());
   const lastTime = useRef(0);
+  const scheduled = useRef<{ stop: () => void }[]>([]);
+  const cancelScheduled = () => {
+    scheduled.current.forEach((x) => x.stop());
+    scheduled.current = [];
+  };
+  const beatsPerBar = Math.max(2, Math.min(12, parseInt(meter ?? "", 10) || 4));
+  // Tempo for counting: the song's BPM, or the one heard in the recording. Use the heard beat grid
+  // only when it agrees with the entered BPM (or there is none); half/double time counts too.
+  const heard = tempo?.bpm ?? 0;
+  const agrees = !!bpm && !!heard && [0.5, 1, 2].some((k) => Math.abs(heard * k - bpm) <= 2);
+  const countBpm = bpm || heard || 0;
+  const grid = tempo && (!bpm || agrees) ? { bpm: bpm || heard, offset: tempo.offset } : null;
   useEffect(() => {
-    if (time < lastTime.current - 0.5) {
-      // jumped backwards: allow cues after this point to be spoken again
+    if (canEdit && !bpm && heard) createClient().from("songs").update({ bpm: heard }).eq("id", songId).is("bpm", null).then(() => {});
+  }, [canEdit, bpm, heard, songId]);
+  useEffect(() => {
+    if (time < lastTime.current - 0.5 || time > lastTime.current + 2) {
+      // jumped: forget what was queued, allow cues after this point again
+      cancelScheduled();
       for (const m of marks) if (m.t > time) spoken.current.delete(m.n);
     }
     lastTime.current = time;
     if (!cues || !playing) return;
-    const lead = (bpm ? (4 * 60) / bpm : 2) / rate;
-    for (const m of marks) {
-      if (time >= m.t - lead && time < m.t - 0.15 && !spoken.current.has(m.n)) {
-        spoken.current.add(m.n);
-        sayCue(voice, sections[m.n]?.label ?? "");
+    const a = audioRef.current;
+    if (!a) return;
+    const spb = countBpm ? 60 / countBpm : 0;
+    const bar = spb ? spb * beatsPerBar : 1.6;
+    for (const m0 of marks) {
+      // Sections start on a beat: line the count up with the recording's beat grid.
+      const m = { n: m0.n, t: grid ? snapToBeat(m0.t, { bpm: grid.bpm, offset: grid.offset }, grid.bpm) : m0.t };
+      if (spoken.current.has(m.n) || m.t < 0.3) continue;
+      // Queue a little ahead of the bar before the section (time updates come ~4× a second).
+      if (time < m.t - bar - 0.7 || time > m.t - 0.15) continue;
+      spoken.current.add(m.n);
+      const label = sections[m.n]?.label ?? "";
+      const now = a.currentTime;
+      const clock = cueClock();
+      const at = (songT: number) => clock + (songT - now) / rate;
+      if (!spb) {
+        // No tempo set: just say the name a moment before.
+        sayCue(voice, label, { when: at(m.t - bar) }).then((x) => scheduled.current.push(x));
+        continue;
       }
+      const barStart = m.t - bar;
+      (async () => {
+        const nameLen = await cueLength(voice, label);
+        if (barStart >= a.currentTime - 0.05) scheduled.current.push(await sayCue(voice, label, { when: at(barStart) }));
+        // Count the remaining beats that the name doesn't cover: "… 2, 3, 4".
+        for (let b = 1; b < beatsPerBar; b++) {
+          const t = barStart + b * spb;
+          if (t < barStart + nameLen * rate * 0.92) continue;
+          if (t < a.currentTime - 0.02) continue;
+          scheduled.current.push(await sayCue(voice, String(b + 1), { when: at(t) }));
+        }
+      })();
     }
-  }, [time, cues, playing, marks, bpm, rate, sections, voice]);
+  }, [time, cues, playing, marks, countBpm, grid?.offset, rate, sections, voice, beatsPerBar]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!playing || !cues) cancelScheduled();
+  }, [playing, cues]);
 
   function toggleCues() {
     if (!cues && !marks.length) {
@@ -498,9 +571,9 @@ export default function RehearsalPlayer({
   // ── Metronome: a short click on every beat at the song's tempo ──
   const [click, setClick] = useState(false);
   useEffect(() => {
-    if (!click || !bpm) return;
+    if (!click || !countBpm) return;
     const ctx = newAudioContext();
-    const spb = 60 / bpm;
+    const spb = 60 / countBpm;
     let next = ctx.currentTime + 0.1;
     let beat = 0;
     const tick = () => {
@@ -523,12 +596,12 @@ export default function RehearsalPlayer({
       window.clearInterval(id);
       ctx.close();
     };
-  }, [click, bpm]);
+  }, [click, countBpm]);
 
   // ── Count-in: clicks at the song's tempo with a spoken count, then the song starts ──
   function runCountIn(): Promise<boolean> {
     const words = countIn === "1234" ? ["1", "2", "3", "4"] : ["3", "2", "1"];
-    const spb = (bpm ? 60 / bpm : 1) / rate;
+    const spb = (countBpm ? 60 / countBpm : 1) / rate;
     unlockCues();
     const t0 = cueClock() + 0.03;
     words.forEach((_, i) => cueClick(t0 + i * spb, i === 0));
@@ -941,13 +1014,13 @@ export default function RehearsalPlayer({
                   <span className={`min-w-[3.6rem] text-center ${pitch ? "font-bold text-accent" : ""}`}>Key {pitch > 0 ? `+${pitch}` : pitch || "0"}</span>
                   <button onClick={() => changePitch(1)} className="px-1.5 py-0.5 font-bold" aria-label="Key up">+</button>
                 </span>
-                {bpm ? (
-                  <button onClick={() => setClick(!click)} className={chip(click)} title="Metronome">
-                    ♩ {bpm}
+                {countBpm ? (
+                  <button onClick={() => setClick(!click)} className={chip(click)} title={bpm ? "Metronome" : "Metronome (tempo heard in the recording)"}>
+                    ♩ {countBpm}{!bpm && "*"}
                   </button>
                 ) : null}
                 <button onClick={toggleCues} className={chip(cues)} title="Say each section's name (Verse 1, Chorus…) just before it starts">
-                  🗣 Cues{!marks.length ? " (mark first)" : estimated ? " (est.)" : ""}
+                  🗣 Guide{countBpm ? " + count" : ""}{!marks.length ? " (mark first)" : estimated ? " (est.)" : ""}
                 </button>
                 <select
                   aria-label="Count-in"
@@ -956,9 +1029,9 @@ export default function RehearsalPlayer({
                   className="rounded-sm border border-current/20 bg-transparent px-1 py-0.5"
                   title="Count before the song starts"
                 >
-                  <option value="321" className="text-ink">Count-in: 3-2-1</option>
-                  <option value="1234" className="text-ink">Count-in: 1-2-3-4</option>
-                  <option value="off" className="text-ink">No count-in</option>
+                  <option value="off" className="text-ink">Play starts right away</option>
+                  <option value="1234" className="text-ink">Count 1-2-3-4 before play</option>
+                  <option value="321" className="text-ink">Count 3-2-1 before play</option>
                 </select>
                 <select
                   aria-label="Guide voice"

@@ -14,12 +14,14 @@ const HAVE = new Set([
   ...[1, 2, 3, 4, 5, 6].map((i) => `verse-${i}`),
   ...[1, 2, 3, 4].flatMap((i) => [`chorus-${i}`, `pre-chorus-${i}`, `bridge-${i}`, `tag-${i}`, `interlude-${i}`, `instrumental-${i}`]),
   ..."12345678".split(""),
+  "down-chorus", "big-chorus", "last-chorus", "final-chorus", "half-chorus", "spontaneous", "exhort", "reprise", "rap", "swell",
+  "a-cappella", "break", "drums-only", "build-2", "build-3", "breakdown-2", "post-chorus-2", "vamp-2", "turnaround-2", "hold", "key-change",
 ]);
 
 /** "Pre Chorus 2 (x2):" → "pre-chorus-2"; falls back to the section word without its number. */
 export function cueSlug(label: string): string | null {
   let s = label.toLowerCase().replace(/\(.*?\)/g, "").replace(/[:.]/g, " ").trim();
-  s = s.replace(/\bpre\s*-?\s*chorus/, "pre-chorus").replace(/\bpost\s*-?\s*chorus/, "post-chorus");
+  s = s.replace(/\bpre\s*-?\s*chorus/, "pre-chorus").replace(/\bpost\s*-?\s*chorus/, "post-chorus").replace(/\s*(x\s*\d+|\d+\s*x)\s*$/, "").replace(/\bexhortation\b/, "exhort").replace(/\bacappella\b/, "a cappella");
   s = s.replace(/[^a-z0-9-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
   if (HAVE.has(s)) return s;
   const base = s.replace(/-?\d+$/, "");
@@ -100,17 +102,42 @@ function speakDevice(text: string, rate = 1.15) {
 }
 
 /** Say a cue now (or at `when` seconds on the cue clock). Falls back to the phone's voice when there's no clip. */
-export async function sayCue(voice: CueVoiceId, label: string, opts: { when?: number; volume?: number } = {}) {
+export async function sayCue(
+  voice: CueVoiceId,
+  label: string,
+  opts: { when?: number; volume?: number } = {}
+): Promise<{ stop: () => void; duration: number }> {
   const slug = voice === "device" ? null : cueSlug(label);
   const c = slug ? context() : null;
   const buf = slug && c ? await load(voice, slug) : null;
-  if (!c || !buf) return speakDevice(label);
+  if (!c || !buf) {
+    // Phone voice can't be scheduled exactly: wait, then speak.
+    const delay = opts.when && c ? Math.max(0, (opts.when - c.currentTime) * 1000) : 0;
+    const id = window.setTimeout(() => speakDevice(label), delay);
+    return { stop: () => window.clearTimeout(id), duration: 0.7 };
+  }
   const s = c.createBufferSource();
   const g = c.createGain();
   g.gain.value = opts.volume ?? 1;
   s.buffer = buf;
   s.connect(g).connect(c.destination);
   s.start(opts.when ?? 0);
+  return {
+    stop: () => {
+      try {
+        s.stop();
+      } catch {}
+    },
+    duration: buf.duration,
+  };
+}
+
+/** Length of a cue clip in seconds (0 if not loaded yet). */
+export async function cueLength(voice: CueVoiceId, label: string) {
+  const slug = voice === "device" ? null : cueSlug(label);
+  if (!slug) return 0.7;
+  const b = await load(voice, slug);
+  return b?.duration ?? 0.7;
 }
 
 /** The cue clock (seconds), for scheduling counts exactly on the beat. */
