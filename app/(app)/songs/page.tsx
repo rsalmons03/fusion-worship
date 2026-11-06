@@ -226,19 +226,29 @@ export default function SongsPage() {
         <span className="text-sm text-muted">{shown.length} songs</span>
         {me.isLeader && (
           <div className="ml-auto flex flex-wrap gap-2">
-            <label className={`btn-secondary cursor-pointer ${importing ? "pointer-events-none opacity-60" : ""}`} title="iTunes / MP3 songs, ProPresenter (.pro), ChordPro or text lyrics. Pick many at once.">
-              {importing || "📥 Import songs"}
+            <label className={`btn-secondary cursor-pointer ${importing ? "pointer-events-none opacity-60" : ""}`} title="iTunes / Apple Music (.m4a) or MP3 song files. Pick many at once.">
+              {importing || "🎵 Add iTunes / MP3 songs"}
+              <input type="file" multiple hidden accept=".m4a,.mp3,.aac,.wav,.aif,.aiff,.flac,.m4p,audio/*" onChange={(e) => { importFiles(e.target.files); e.target.value = ""; }} />
+            </label>
+            <label className={`btn-secondary cursor-pointer ${importing ? "pointer-events-none opacity-60" : ""}`} title="ProPresenter (.pro), ChordPro or text lyrics. Pick many at once.">
+              📥 Import lyrics
               <input type="file" multiple hidden onChange={(e) => { importFiles(e.target.files); e.target.value = ""; }} />
             </label>
             <Link href="/songs/new" className="btn">+ New song</Link>
           </div>
         )}
       </div>
+      {me.isLeader && (
+        <p className="text-xs text-muted">
+          <b>🎵 Add iTunes / MP3 songs:</b> pick your song files (.m4a or .mp3) and each one is matched to its song (or added) with the name, artist, BPM and key filled in, ready to play.
+          Use the computer that has iTunes: the files are in <i>Music › iTunes › iTunes Media › Music</i> (Windows) or <i>Music › Music › Media › Music</i> (Mac). iPhone music can&apos;t be picked from a web page.
+        </p>
+      )}
       {me.isLeader && missing > 0 && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           <b>{missing === 1 ? "1 song has" : `${missing} songs have`} no lyrics yet</b>, so {missing === 1 ? "it won't" : "they won't"} show on the lyrics screen or give section cues.{" "}
           <button className="font-semibold underline" onClick={() => setMissingOnly(!missingOnly)}>{missingOnly ? "Show all songs" : "Show which"}</button>
-          <div className="mt-1 text-amber-800">Tip: 📥 Import songs takes your ProPresenter .pro files and your iTunes songs (.m4a / .mp3), all at once.</div>
+          <div className="mt-1 text-amber-800">Tip: 📥 Import lyrics takes your ProPresenter .pro files (select them all at once).</div>
         </div>
       )}
       <div className="flex flex-wrap gap-3">
