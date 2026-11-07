@@ -11,6 +11,7 @@ export default function ChordSheet({
   dark = false,
   numbersKey = null,
   follow = null,
+  sectionChords = null,
 }: {
   source: string;
   semis?: number;
@@ -22,10 +23,12 @@ export default function ChordSheet({
   numbersKey?: string | null;
   /** While a track plays: the section playing (null = before the first) and how far through it (0–1). Highlights and scrolls along. */
   follow?: { n: number | null; progress: number } | null;
+  /** Chords heard in the recording, per section; shown on sections whose chart has no chords. */
+  sectionChords?: Record<number, string[]> | null;
 }) {
   const lines = useMemo(() => parseChordPro(source), [source]);
   // Section number for each line, the lyric lines of each section, and, for a repeat like a bare "Chorus", the words to borrow.
-  const { secOf, lyricIdx, counts, borrow } = useMemo(() => {
+  const { secOf, lyricIdx, counts, borrow, hasChords } = useMemo(() => {
     const secOf: number[] = [];
     const lyricIdx: number[] = [];
     const counts: number[] = [];
@@ -46,6 +49,13 @@ export default function ChordSheet({
       }
       secOf[i] = cur;
     });
+    // sections that already show chords (inline chords or a "Chords:" note)
+    const hasChords: boolean[] = [];
+    let sc = -1;
+    for (const l of lines) {
+      if (l.type === "section") sc++;
+      else if (sc >= 0 && ((l.type === "lyrics" && l.hasChords) || (l.type === "comment" && /^chords:/i.test(l.text)))) hasChords[sc] = true;
+    }
     const borrow: Record<number, SheetLine[]> = {};
     labels.forEach((lab, n) => {
       if (!counts[n]) {
@@ -53,7 +63,7 @@ export default function ChordSheet({
         if (b?.length) borrow[n] = b;
       }
     });
-    return { secOf, lyricIdx, counts, borrow };
+    return { secOf, lyricIdx, counts, borrow, hasChords };
   }, [lines]);
 
   const activeN = follow ? follow.n : null;
@@ -104,6 +114,11 @@ export default function ChordSheet({
               >
                 {on && "▶ "}
                 {l.label}
+                {showChords && !hasChords[n] && sectionChords?.[n]?.length ? (
+                  <span className="ml-2 font-mono text-[0.95em] normal-case tracking-normal text-accent" title="Chords heard in the recording (best guess)">
+                    🎧 {sectionChords[n].join(" · ")}
+                  </span>
+                ) : null}
               </div>
               {/* A repeat with no words of its own: show the words while it plays. */}
               {on && !counts[n] && borrow[n] && <div>{borrow[n].map((b, k) => b.type === "lyrics" && lyricRow(b, `b${k}`, k === activeLine))}</div>}

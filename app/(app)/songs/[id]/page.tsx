@@ -47,6 +47,7 @@ export default function SongPage() {
   const [song, setSong] = useState<Omit<Song, "id">>(EMPTY);
   const [pos, setPos] = useState<{ n: number | null; progress: number } | null>(null);
   const [audioPitch, setAudioPitch] = useState(0);
+  const [heard, setHeard] = useState<Record<number, string[]> | null>(null);
   const [loaded, setLoaded] = useState(isNew);
   const [editing, setEditing] = useState(isNew);
   const [saving, setSaving] = useState(false);
@@ -259,8 +260,8 @@ export default function SongPage() {
               </div>
               <button className="btn-ghost" onClick={() => window.print()}>Print</button>
             </div>
-            <RehearsalPlayer key={filesVersion} songId={params.id} chart={song.chordpro} canEdit={canEdit} bpm={song.bpm} meter={song.meter} onPitch={setAudioPitch} onChartCreated={(chordpro) => setSong((s) => ({ ...s, chordpro }))} onPosition={(p) => setPos(p.n === null ? null : { n: p.n, progress: p.progress })} />
-            <ChordSheet source={song.chordpro} semis={semis} flats={flats} showChords={view !== "lyrics"} numbersKey={view === "numbers" ? song.default_key : null} follow={pos} />
+            <RehearsalPlayer key={filesVersion} songId={params.id} chart={song.chordpro} canEdit={canEdit} bpm={song.bpm} meter={song.meter} onPitch={setAudioPitch} onChartCreated={(chordpro) => setSong((s) => ({ ...s, chordpro }))} onChords={setHeard} onPosition={(p) => setPos(p.n === null ? null : { n: p.n, progress: p.progress })} />
+            <ChordSheet source={song.chordpro} semis={semis} flats={flats} showChords={view !== "lyrics"} numbersKey={view === "numbers" ? song.default_key : null} follow={pos} sectionChords={heard} />
           </div>
           <aside className="space-y-4">
             {song.multitracks_url && (

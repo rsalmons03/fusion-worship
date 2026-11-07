@@ -1,6 +1,8 @@
 "use client";
 import { alignSections, chartFromTranscript } from "@/lib/autosync";
 import { detectTempo, snapToBeat, type Tempo } from "@/lib/tempo";
+import { detectChords, progression, type ChordResult } from "@/lib/chords";
+import { transposeChord, withSectionChords } from "@/lib/chordpro";
 import { createPitchShifter } from "@/lib/pitchShift";
 import { CUE_VOICES, type CueVoiceId, cueClick, cueClock, cueLength, decodeAudio, sharedAudio, playThroughSilentSwitch, preloadCues, sayCue, unlockCues } from "@/lib/cueVoice";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -68,6 +70,7 @@ export default function RehearsalPlayer({
   onPosition,
   onPitch,
   onChartCreated,
+  onChords,
 }: {
   songId: string;
   chart: string;
@@ -92,6 +95,8 @@ export default function RehearsalPlayer({
   onPitch?: (semitones: number) => void;
   /** The AI wrote this song's lyrics/sections (Auto-sync on a song with none). */
   onChartCreated?: (chart: string) => void;
+  /** Chords heard in each section (section number → progression), already in the played key. */
+  onChords?: (bySection: Record<number, string[]> | null) => void;
 }) {
   const sections = useMemo(() => sectionsOf(chart), [chart]);
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -110,6 +115,8 @@ export default function RehearsalPlayer({
   const [peaks, setPeaks] = useState<number[] | null>(null);
   // Tempo and beat grid heard in the recording (used when the song has no BPM entered).
   const [tempo, setTempo] = useState<Tempo | null>(null);
+  // Chords heard in the recording (best guess, like Moises / Chordify).
+  const [heardChords, setHeardChords] = useState<ChordResult | null>(null);
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -203,6 +210,7 @@ export default function RehearsalPlayer({
   useEffect(() => {
     setPeaks(null);
     setTempo(null);
+    setHeardChords(null);
     setTime(0);
     setPlaying(false);
     if (!trackUrl) return;
@@ -228,6 +236,14 @@ export default function RehearsalPlayer({
           try {
             const t = detectTempo(data, audio.sampleRate);
             if (alive && t) setTempo(t);
+            // Then the chords, beat by beat.
+            setTimeout(() => {
+              if (!alive) return;
+              try {
+                const c = detectChords(data, audio.sampleRate, t);
+                if (alive && c) setHeardChords(c);
+              } catch {}
+            }, 30);
           } catch {}
         };
         const w = window as unknown as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => void };
@@ -406,6 +422,39 @@ export default function RehearsalPlayer({
   const pitchCb = useRef(onPitch);
   pitchCb.current = onPitch;
   useEffect(() => pitchCb.current?.(pitch), [pitch]);
+  // ── Heard chords: now / next while playing, and each section's progression ──
+  const flatKey = /b|F$|Dm|Gm|Cm|Fm/.test(heardChords?.key ?? "");
+  const shownChord = useCallback((name: string) => (pitch ? transposeChord(name, pitch, flatKey) : name), [pitch, flatKey]);
+  const chordNow = useMemo(() => {
+    if (!heardChords) return null;
+    const list = heardChords.chords;
+    const i = list.findIndex((c) => c.t <= time + 0.05 && c.end > time + 0.05);
+    const cur = i >= 0 ? list[i] : null;
+    const next = list.slice(i >= 0 ? i + 1 : 0).find((c) => c.t > time && c.name !== cur?.name);
+    return { cur: cur ? shownChord(cur.name) : "", next: next ? shownChord(next.name) : "" };
+  }, [heardChords, time, shownChord]);
+  const bySection = useMemo(() => {
+    if (!heardChords || !marks.length) return null;
+    const out: Record<number, string[]> = {};
+    marks.forEach((m, i) => {
+      const end = marks[i + 1]?.t ?? duration;
+      out[m.n] = progression(heardChords.chords, m.t, end).slice(0, 10).map(shownChord);
+    });
+    return out;
+  }, [heardChords, marks, duration, shownChord]);
+  const chordsCb = useRef(onChords);
+  chordsCb.current = onChords;
+  useEffect(() => chordsCb.current?.(bySection), [bySection]);
+  async function saveChordsToChart() {
+    if (!bySection || !canEdit) return;
+    if (!confirm("Add the chords the app heard under each section of this song's chart? (e.g. \"Chords: G D Em C\")\n\nThey're a best guess: check them with the band.")) return;
+    const next = withSectionChords(chart, bySection);
+    const { error } = await createClient().from("songs").update({ chordpro: next }).eq("id", songId);
+    if (error) return alert(error.message);
+    if (onChartCreated) onChartCreated(next);
+    else window.location.reload();
+  }
+
   function changePitch(d: number) {
     const next = Math.max(-6, Math.min(6, pitch + d));
     if (next === pitch) return;
@@ -974,9 +1023,16 @@ export default function RehearsalPlayer({
               </div>
             )}
 
-            <div className="mb-1 flex justify-between font-mono text-[11px] tabular-nums opacity-60">
-              <span>{fmt(time)}</span>
-              <span>{fmt(duration)}</span>
+            <div className="mb-1 flex items-center justify-between font-mono text-[11px] tabular-nums">
+              <span className="opacity-60">{fmt(time)}</span>
+              {chordNow && (chordNow.cur || chordNow.next) && (
+                <span className="flex items-baseline gap-2 font-sans" title={`Chords heard in the recording (key ${heardChords?.key}). A best guess.`}>
+                  <span className="text-[10px] font-bold uppercase tracking-wide opacity-50">🎸</span>
+                  <span className="min-w-[2.5ch] text-center text-xl font-extrabold text-accent">{chordNow.cur || "–"}</span>
+                  {chordNow.next && <span className="text-sm font-semibold opacity-50">→ {chordNow.next}</span>}
+                </span>
+              )}
+              <span className="opacity-60">{fmt(duration)}</span>
             </div>
             <div className="flex items-center justify-center gap-5">
               {onPrevSong ? (
@@ -1090,6 +1146,11 @@ export default function RehearsalPlayer({
                     <button onClick={autoSync} disabled={!!syncing} className={chip(!!syncing)} title="AI listens to the song and finds where each section starts">
                       {syncing ?? (sections.length ? "🤖 Auto-sync" : "🤖 AI: write lyrics + sections")}
                     </button>
+                    {bySection && sections.length > 0 && (
+                      <button onClick={saveChordsToChart} className={chip(false)} title="Write the heard chords under each section of the chart">
+                        🎸 Save chords
+                      </button>
+                    )}
                     {marks.length > 0 && !marking && <button className="opacity-60 hover:opacity-100" onClick={clearMarkers}>Clear marks</button>}
                   </>
                 )}

@@ -39,9 +39,11 @@ export default function SetPlayerPage() {
   const screen = useScreenSync(params.id);
   const [pos, setPos] = useState<{ n: number | null; progress: number } | null>(null);
   const [audioPitch, setAudioPitch] = useState(0);
+  const [heard, setHeard] = useState<Record<number, string[]> | null>(null);
   useEffect(() => {
     setPos(null);
     setAudioPitch(0);
+    setHeard(null);
   }, [idx]);
   const { slides } = usePlanSlides(params.id, screen.state.lines);
 
@@ -164,6 +166,7 @@ export default function SetPlayerPage() {
             onNextSong={(playing) => go(idx + 1, playing)}
             hideRoadmap={tab !== "Chart" && tab !== "Lyrics"}
             onPitch={setAudioPitch}
+            onChords={setHeard}
             onPosition={(pos) => {
               setPos(pos.n === null ? null : { n: pos.n, progress: pos.progress });
               const st = screen.state;
@@ -201,7 +204,7 @@ export default function SetPlayerPage() {
             {song.meter && <span>{song.meter}</span>}
           </div>
           {song.chordpro.trim() ? (
-            <ChordSheet source={song.chordpro} semis={semis} flats={prefersFlats(key)} showChords={tab === "Chart"} fontSize={18} follow={pos} />
+            <ChordSheet source={song.chordpro} semis={semis} flats={prefersFlats(key)} showChords={tab === "Chart"} fontSize={18} follow={pos} sectionChords={heard} />
           ) : (
             <p className="text-sm text-muted">No chart yet. {me.isLeader && <Link href={`/songs/${song.id}`} className="text-accent">Add one</Link>}</p>
           )}

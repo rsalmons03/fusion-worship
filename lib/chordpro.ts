@@ -281,3 +281,33 @@ export function sectionsOf(src: string): SectionInfo[] {
   }
   return out;
 }
+
+/** Raw line numbers of the section headings, in order (matches sectionsOf numbering). */
+export function sectionLineIndexes(src: string): number[] {
+  const out: number[] = [];
+  src.replace(/\r\n?/g, "\n").split("\n").forEach((raw, i) => {
+    const line = raw.trim();
+    const dir = line.match(/^\{([^:}]+)(?::\s*([^}]*))?\}$/);
+    if (dir) {
+      if (dir[1].trim().toLowerCase() in START_DIRECTIVES) out.push(i);
+      return;
+    }
+    if (line && SECTION_RE.test(line)) out.push(i);
+  });
+  return out;
+}
+
+/** Adds (or replaces) a "Chords: G D Em C" note under each section heading. */
+export function withSectionChords(src: string, bySection: Record<number, string[]>): string {
+  const lines = src.replace(/\r\n?/g, "\n").split("\n");
+  const idx = sectionLineIndexes(src);
+  for (let n = idx.length - 1; n >= 0; n--) {
+    const prog = bySection[n];
+    if (!prog?.length) continue;
+    const at = idx[n] + 1;
+    const note = `{comment: Chords: ${prog.join(" ")}}`;
+    if (/^\{(comment|c):\s*Chords:/i.test(lines[at]?.trim() ?? "")) lines[at] = note;
+    else lines.splice(at, 0, note);
+  }
+  return lines.join("\n");
+}
