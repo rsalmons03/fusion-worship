@@ -1,7 +1,10 @@
-// Recorded guide-voice clips ("Verse 1", "Chorus", "3, 2, 1"…) in /public/cues/<voice>/<slug>.mp3.
+// Recorded guide-voice clips ("Verse 1", "Chorus", "3, 2, 1"…) in /public/cues/<voice>/<slug>.mp3,
+// or your own team's recordings (Guide voice page) in storage at charts/guide-voice/<slug>.wav.
 // Played through Web Audio so they keep working on iPhone after the first tap.
+import { createClient } from "@/lib/supabase/client";
 
 export const CUE_VOICES = [
+  { id: "team", name: "Our team's voice" },
   { id: "male", name: "Male voice" },
   { id: "female", name: "Female voice" },
   { id: "device", name: "Phone's voice" },
@@ -78,7 +81,47 @@ export function unlockCues() {
   s.start(0);
 }
 
-function load(voice: string, slug: string) {
+export const TEAM_FOLDER = "guide-voice";
+let teamUrls: Promise<Map<string, string>> | null = null;
+/** Signed links to the team's recorded calls (slug → url). */
+export function teamVoiceUrls() {
+  if (!teamUrls) {
+    teamUrls = (async () => {
+      const sb = createClient();
+      const { data } = await sb.storage.from("charts").list(TEAM_FOLDER, { limit: 500 });
+      const names = (data ?? []).map((f) => f.name).filter((n) => /\.(wav|m4a|mp3|webm)$/i.test(n));
+      if (!names.length) return new Map<string, string>();
+      const { data: signed } = await sb.storage.from("charts").createSignedUrls(names.map((n) => `${TEAM_FOLDER}/${n}`), 60 * 60 * 8);
+      const m = new Map<string, string>();
+      (signed ?? []).forEach((x, i) => x.signedUrl && m.set(names[i].replace(/\.[^.]+$/, ""), x.signedUrl));
+      return m;
+    })().catch(() => new Map<string, string>());
+  }
+  return teamUrls;
+}
+/** After recording, forget cached team clips so the new ones are used. */
+export function refreshTeamVoice() {
+  teamUrls = null;
+  for (const k of [...buffers.keys()]) if (k.startsWith("team/")) buffers.delete(k);
+}
+
+function load(voice: string, slug: string): Promise<AudioBuffer | null> {
+  if (voice === "team") {
+    const key = `team/${slug}`;
+    if (!buffers.has(key))
+      buffers.set(
+        key,
+        teamVoiceUrls().then((m) => {
+          const url = m.get(slug) ?? (/-\d+$/.test(slug) ? m.get(slug.replace(/-\d+$/, "")) : undefined);
+          if (!url) return load("male", slug); // not recorded yet: use the built-in voice
+          return fetch(url)
+            .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject()))
+            .then(decodeAudio)
+            .catch(() => load("male", slug));
+        })
+      );
+    return buffers.get(key)!;
+  }
   const key = `${voice}/${slug}`;
   if (!buffers.has(key)) {
     buffers.set(
@@ -207,3 +250,17 @@ export function cueClick(at: number, accent: boolean, volume = 0.6): { stop: () 
       }),
   };
 }
+
+/** The calls a team records on the Guide voice page, most-used first. */
+export const GUIDE_PHRASES: { slug: string; say: string; group: string }[] = [
+  ...["1", "2", "3", "4"].map((n) => ({ slug: n, say: ["One", "Two", "Three", "Four"][+n - 1], group: "Count-in" })),
+  ...[
+    ["intro", "Intro"], ["verse-1", "Verse 1"], ["verse-2", "Verse 2"], ["verse-3", "Verse 3"], ["verse-4", "Verse 4"],
+    ["pre-chorus", "Pre-Chorus"], ["chorus", "Chorus"], ["post-chorus", "Post-Chorus"], ["bridge", "Bridge"], ["build", "Build"],
+    ["breakdown", "Breakdown"], ["down-chorus", "Down Chorus"], ["big-chorus", "Big Chorus"], ["last-chorus", "Last Chorus"],
+    ["tag", "Tag"], ["vamp", "Vamp"], ["instrumental", "Instrumental"], ["interlude", "Interlude"], ["turnaround", "Turnaround"],
+    ["spontaneous", "Spontaneous"], ["outro", "Outro"], ["ending", "Ending"], ["key-change", "Key Change"], ["hold", "Hold"],
+    ["all-in", "All in"], ["drums-only", "Drums only"], ["a-cappella", "A cappella"], ["refrain", "Refrain"], ["hook", "Hook"], ["solo", "Solo"],
+  ].map(([slug, say]) => ({ slug, say, group: "Sections" })),
+  { slug: "cues-on", say: "Cues on", group: "Other" },
+];

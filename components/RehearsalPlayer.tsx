@@ -4,7 +4,7 @@ import { detectTempo, snapToBeat, type Tempo } from "@/lib/tempo";
 import { detectChords, progression, type ChordResult } from "@/lib/chords";
 import { transposeChord, withSectionChords } from "@/lib/chordpro";
 import { createPitchShifter } from "@/lib/pitchShift";
-import { CUE_VOICES, type CueVoiceId, cueClick, cueClock, cueLength, decodeAudio, sharedAudio, playThroughSilentSwitch, preloadCues, sayCue, unlockCues } from "@/lib/cueVoice";
+import { CUE_VOICES, type CueVoiceId, teamVoiceUrls, cueClick, cueClock, cueLength, decodeAudio, sharedAudio, playThroughSilentSwitch, preloadCues, sayCue, unlockCues } from "@/lib/cueVoice";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { parseChordPro, sectionsOf, type SectionInfo } from "@/lib/chordpro";
@@ -154,7 +154,9 @@ export default function RehearsalPlayer({
   useEffect(() => {
     try {
       const v = localStorage.getItem("fw.voice");
-      if (v === "male" || v === "female" || v === "device") setVoice(v);
+      if (v === "team" || v === "male" || v === "female" || v === "device") setVoice(v);
+      // No choice made yet: use the team's own recorded voice if they've recorded one.
+      else teamVoiceUrls().then((m) => m.size > 0 && setVoice("team"));
     } catch {}
   }, []);
   const chooseVoice = (v: CueVoiceId) => {

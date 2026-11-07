@@ -46,6 +46,7 @@ export default function Nav() {
       ? [
           { href: "/schedule", label: "Scheduler (bulk)" },
           { href: "/templates", label: "Order templates" },
+          { href: "/guide-voice", label: "Guide voice (record)" },
           { href: "/roster", label: "Roster" },
           { href: "/confirmations", label: "Confirmations" },
           { href: "/health", label: "Team health" },
