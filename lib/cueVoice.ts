@@ -158,16 +158,52 @@ export function cueClock() {
   return context()?.currentTime ?? 0;
 }
 
-/** A metronome click on the cue clock. */
-export function cueClick(at: number, accent: boolean) {
+/**
+ * A click like a guide track's: a short woodblock "tock" (the downbeat a little higher),
+ * scheduled on the cue clock. Returns a way to cancel it.
+ */
+export function cueClick(at: number, accent: boolean, volume = 0.6): { stop: () => void } {
   const c = context();
-  if (!c) return;
-  const o = c.createOscillator();
-  const g = c.createGain();
-  o.frequency.value = accent ? 1500 : 1000;
-  g.gain.setValueAtTime(0.45, at);
-  g.gain.exponentialRampToValueAtTime(0.001, at + 0.06);
-  o.connect(g).connect(c.destination);
-  o.start(at);
-  o.stop(at + 0.07);
+  if (!c) return { stop: () => {} };
+  const out = c.createGain();
+  out.gain.value = volume;
+  out.connect(c.destination);
+  const f = accent ? 1250 : 850;
+  const nodes: AudioScheduledSourceNode[] = [];
+  // body: two short sine partials with a fast decay
+  for (const [mult, amp] of [[1, 0.9], [2.7, 0.35]] as const) {
+    const o = c.createOscillator();
+    const g = c.createGain();
+    o.frequency.value = f * mult;
+    g.gain.setValueAtTime(0, at);
+    g.gain.linearRampToValueAtTime(amp, at + 0.001);
+    g.gain.exponentialRampToValueAtTime(0.0008, at + 0.045);
+    o.connect(g).connect(out);
+    o.start(at);
+    o.stop(at + 0.06);
+    nodes.push(o);
+  }
+  // attack: a tiny filtered noise tick
+  const len = Math.floor(c.sampleRate * 0.006);
+  const buf = c.createBuffer(1, len, c.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const n = c.createBufferSource();
+  n.buffer = buf;
+  const hp = c.createBiquadFilter();
+  hp.type = "highpass";
+  hp.frequency.value = 2500;
+  const ng = c.createGain();
+  ng.gain.value = 0.35;
+  n.connect(hp).connect(ng).connect(out);
+  n.start(at);
+  nodes.push(n);
+  return {
+    stop: () =>
+      nodes.forEach((x) => {
+        try {
+          x.stop();
+        } catch {}
+      }),
+  };
 }
