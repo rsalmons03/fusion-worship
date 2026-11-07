@@ -1146,6 +1146,11 @@ export default function RehearsalPlayer({
                     <button onClick={autoSync} disabled={!!syncing} className={chip(!!syncing)} title="AI listens to the song and finds where each section starts">
                       {syncing ?? (sections.length ? "🤖 Auto-sync" : "🤖 AI: write lyrics + sections")}
                     </button>
+                    {!stems.length && (
+                      <a href={`/songs/${songId}#song-files`} className={chip(false)} title="Split this song into vocals, drums, bass, guitar, keys and other">
+                        ✂ Split into stems
+                      </a>
+                    )}
                     {bySection && sections.length > 0 && (
                       <button onClick={saveChordsToChart} className={chip(false)} title="Write the heard chords under each section of the chart">
                         🎸 Save chords
