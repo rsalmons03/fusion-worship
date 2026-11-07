@@ -176,6 +176,7 @@ export default function RehearsalPlayer({
     } catch {}
   };
 
+  const [filesReload, setFilesReload] = useState(0);
   // ── Load audio files for this song ──
   useEffect(() => {
     const supabase = createClient();
@@ -197,7 +198,7 @@ export default function RehearsalPlayer({
     return () => {
       alive = false;
     };
-  }, [songId]);
+  }, [songId, filesReload]);
 
   // Markers live on the main track (the first stem in mixer mode).
   const setMarkers = useCallback(
@@ -422,6 +423,36 @@ export default function RehearsalPlayer({
   const pitchCb = useRef(onPitch);
   pitchCb.current = onPitch;
   useEffect(() => pitchCb.current?.(pitch), [pitch]);
+  // ── Split into stems (Replicate), right from the player ──
+  const [splitting, setSplitting] = useState<string | null>(null);
+  async function splitHere() {
+    const src = tracks.find((t) => !t.isStem) ?? track;
+    if (!src || splitting) return;
+    if (!confirm(`Split "${src.name}" into Vocals, Drums, Bass, Guitar, Keys and Other?\n\nUses the AI splitting service (a few cents) and takes about 1–3 minutes. The original stays.`)) return;
+    setSplitting("Starting…");
+    try {
+      const start = await fetch("/api/stems", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fileId: src.id }) }).then((r) => r.json());
+      if (!start.jobId) throw new Error(start.error ?? "Couldn't start");
+      const began = Date.now();
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 5000));
+        const st = await fetch(`/api/stems?job=${start.jobId}`).then((r) => r.json());
+        const secs = Math.round((Date.now() - began) / 1000);
+        if (st.status === "done") break;
+        if (st.status === "failed" || st.error) throw new Error(st.error ?? "failed");
+        setSplitting(`${st.status === "importing" ? "Saving the parts" : "Splitting"}… ${secs}s (1–3 min)`);
+        if (Date.now() - began > 15 * 60 * 1000) throw new Error("Took too long; check back in a few minutes.");
+      }
+      setFilesReload((n) => n + 1);
+      setShowMixer(true);
+      alert("✂ Done! The song is split into stems. Open the Mixer to mute, solo or turn parts up and down.");
+    } catch (e) {
+      alert("Split: " + (e as Error).message);
+    } finally {
+      setSplitting(null);
+    }
+  }
+
   // ── Heard chords: now / next while playing, and each section's progression ──
   const flatKey = /b|F$|Dm|Gm|Cm|Fm/.test(heardChords?.key ?? "");
   const shownChord = useCallback((name: string) => (pitch ? transposeChord(name, pitch, flatKey) : name), [pitch, flatKey]);
@@ -919,6 +950,16 @@ export default function RehearsalPlayer({
             {!track && <p className="mb-2 text-xs opacity-70">No audio uploaded for this song.</p>}
 
             {/* Mixer */}
+            {canEdit && track && !stems.length && (
+              <button
+                onClick={splitHere}
+                disabled={!!splitting}
+                className="mb-3 w-full rounded-md bg-accent px-3 py-2.5 text-sm font-bold text-white shadow-sm disabled:opacity-80"
+                title="Split into vocals, drums, bass, guitar, keys and other"
+              >
+                {splitting ?? "✂ Split this song into stems (vocals, drums, bass, keys…)"}
+              </button>
+            )}
             {showTimes && track && (
               <div className="mb-3 max-h-56 overflow-y-auto rounded-md bg-black/5 p-2 text-xs">
                 <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -1146,11 +1187,6 @@ export default function RehearsalPlayer({
                     <button onClick={autoSync} disabled={!!syncing} className={chip(!!syncing)} title="AI listens to the song and finds where each section starts">
                       {syncing ?? (sections.length ? "🤖 Auto-sync" : "🤖 AI: write lyrics + sections")}
                     </button>
-                    {!stems.length && (
-                      <a href={`/songs/${songId}#song-files`} className={chip(false)} title="Split this song into vocals, drums, bass, guitar, keys and other">
-                        ✂ Split into stems
-                      </a>
-                    )}
                     {bySection && sections.length > 0 && (
                       <button onClick={saveChordsToChart} className={chip(false)} title="Write the heard chords under each section of the chart">
                         🎸 Save chords

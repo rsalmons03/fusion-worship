@@ -153,8 +153,8 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
           <li key={f.id} className="flex items-center gap-2">
             <button className="flex-1 truncate text-left text-accent hover:underline" onClick={() => open(f)}>{fileIcon(f.path)} {f.name}</button>
             {canEdit && isAudio(f.path) && !f.is_stem && !split && (
-              <button className="rounded-sm border border-accent px-1.5 py-0.5 text-[10px] font-bold uppercase text-accent hover:bg-accent hover:text-white" onClick={() => splitFile(f)} title="Split into vocals, drums, bass, guitar, keys and other">
-                ✂ Split
+              <button className="shrink-0 rounded-md bg-accent px-2.5 py-1 text-xs font-bold text-white hover:bg-accent-dark" onClick={() => splitFile(f)} title="Split into vocals, drums, bass, guitar, keys and other">
+                ✂ Split into stems
               </button>
             )}
             {isAudio(f.path) && f.is_stem !== undefined && (canEdit ? (
