@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { callerProfile } from "@/lib/apiAuth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { SUPABASE_URL } from "@/lib/supabase/config";
 import { getPrediction, startSplit, stemLabel, stemUrls } from "@/lib/replicate";
 
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -50,7 +49,8 @@ export async function GET(req: Request) {
   const admin = createAdminClient();
   const { data: job } = await admin.from("stem_jobs").select("*").eq("id", jobId).maybeSingle();
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
-  if (job.status === "done" || job.status === "failed" || job.status === "importing") return NextResponse.json({ status: job.status, error: job.error });
+  const stuck = job.status === "importing" && Date.now() - new Date(job.updated_at).getTime() > 3 * 60 * 1000;
+  if (job.status === "done" || job.status === "failed" || (job.status === "importing" && !stuck)) return NextResponse.json({ status: job.status, error: job.error });
 
   try {
     const pred = await getPrediction(job.prediction_id);
@@ -63,43 +63,64 @@ export async function GET(req: Request) {
       return NextResponse.json({ status: pred.status });
     }
 
-    // Claim the import so two checks can't both save the stems.
-    const { data: claimed } = await admin
+    // Claim the import so two checks can't both save the stems. An import that stalled (e.g. the
+    // request was cut off) for over 3 minutes can be claimed again.
+    const stale = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    let { data: claimed } = await admin
       .from("stem_jobs")
       .update({ status: "importing", updated_at: new Date().toISOString() })
       .eq("id", job.id)
       .in("status", ["starting", "processing", "succeeded"])
       .select("id");
+    if (!claimed?.length && job.status === "importing" && job.updated_at < stale)
+      ({ data: claimed } = await admin.from("stem_jobs").update({ status: "importing", updated_at: new Date().toISOString() }).eq("id", job.id).eq("status", "importing").lt("updated_at", stale).select("id"));
     if (!claimed?.length) return NextResponse.json({ status: "importing" });
 
     const parts = stemUrls(pred.output);
     if (!parts.length) throw new Error("The splitter finished but returned no parts.");
-    const { data: src } = await admin.from("song_files").select("name").eq("id", job.file_id).maybeSingle();
-    const key = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").replace(/\s+/g, "");
-    let saved = 0;
-    for (const [part, url] of parts) {
-      const audio = await fetch(url);
-      if (!audio.ok || !audio.body) continue;
-      const path = `${job.song_id}/${crypto.randomUUID()}.mp3`;
-      // Stream straight from Replicate into storage (no big buffers in the server).
-      const up = await fetch(`${SUPABASE_URL}/storage/v1/object/charts/${path}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${key}`, apikey: key, "Content-Type": "audio/mpeg", "x-upsert": "true" },
-        body: audio.body,
-        // @ts-expect-error: needed to send a streamed body (Node / Workers)
-        duplex: "half",
-      });
-      if (!up.ok) throw new Error(`Saving ${part} failed: ${up.status} ${(await up.text()).slice(0, 150)}`);
-      const name = `${stemLabel(part)} (split${src?.name ? ` from ${src.name}` : ""})`;
-      let { error } = await admin.from("song_files").insert({ song_id: job.song_id, name, path, is_stem: true });
-      if (error && /is_stem/.test(error.message)) ({ error } = await admin.from("song_files").insert({ song_id: job.song_id, name, path }));
-      if (error) throw new Error(error.message);
-      saved++;
+    const work = importParts(job, parts);
+    // Let the save finish on the server even if the phone disconnects (Cloudflare keeps it running).
+    try {
+      const { getCloudflareContext } = await import("@opennextjs/cloudflare");
+      getCloudflareContext().ctx.waitUntil(work.catch(() => {}));
+      return NextResponse.json({ status: "importing" });
+    } catch {
+      const saved = await work; // not on Cloudflare (local dev): just wait
+      return NextResponse.json({ status: "done", saved });
     }
-    await admin.from("stem_jobs").update({ status: "done", updated_at: new Date().toISOString() }).eq("id", job.id);
-    return NextResponse.json({ status: "done", saved });
   } catch (e) {
     await admin.from("stem_jobs").update({ status: "failed", error: (e as Error).message, updated_at: new Date().toISOString() }).eq("id", job.id);
     return NextResponse.json({ status: "failed", error: (e as Error).message });
+  }
+}
+
+/** Downloads every part from Replicate and saves it to the song as a stem (all at once). */
+async function importParts(job: { id: string; song_id: string; file_id: string }, parts: [string, string][]) {
+  const admin = createAdminClient();
+  try {
+    const { data: src } = await admin.from("song_files").select("name").eq("id", job.file_id).maybeSingle();
+    const { data: existing } = await admin.from("song_files").select("name").eq("song_id", job.song_id);
+    const have = new Set((existing ?? []).map((f) => f.name));
+    const results = await Promise.all(
+      parts.map(async ([part, url]) => {
+        const name = `${stemLabel(part)} (split${src?.name ? ` from ${src.name}` : ""})`;
+        if (have.has(name)) return 1; // already saved by an earlier try
+        const audio = await fetch(url);
+        if (!audio.ok) throw new Error(`Downloading ${part} failed (${audio.status})`);
+        const bytes = await audio.arrayBuffer();
+        const path = `${job.song_id}/${crypto.randomUUID()}.mp3`;
+        const up = await admin.storage.from("charts").upload(path, bytes, { contentType: "audio/mpeg", upsert: true });
+        if (up.error) throw new Error(`Saving ${part} failed: ${up.error.message}`);
+        let { error } = await admin.from("song_files").insert({ song_id: job.song_id, name, path, is_stem: true });
+        if (error && /is_stem/.test(error.message)) ({ error } = await admin.from("song_files").insert({ song_id: job.song_id, name, path }));
+        if (error) throw new Error(error.message);
+        return 1;
+      })
+    );
+    await admin.from("stem_jobs").update({ status: "done", updated_at: new Date().toISOString() }).eq("id", job.id);
+    return results.length;
+  } catch (e) {
+    await admin.from("stem_jobs").update({ status: "failed", error: (e as Error).message, updated_at: new Date().toISOString() }).eq("id", job.id);
+    throw e;
   }
 }
