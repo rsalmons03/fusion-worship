@@ -161,7 +161,7 @@ export default function SongPage() {
         </div>
         {canEdit && !editing && (
           <div className="flex gap-2 print:hidden">
-            <button className="btn" onClick={() => setEditing(true)}>Edit</button>
+            <button className="btn" onClick={() => setEditing(true)}>Edit song &amp; lyrics</button>
             {song.archived ? (
               <button className="btn-secondary" onClick={async () => { await supabase.from("songs").update({ archived: false }).eq("id", params.id); set("archived", false); }}>Unarchive</button>
             ) : (
@@ -262,6 +262,12 @@ export default function SongPage() {
               <button className="btn-ghost" onClick={() => window.print()}>Print</button>
             </div>
             <RehearsalPlayer key={filesVersion} songId={params.id} chart={song.chordpro} canEdit={canEdit} bpm={song.bpm} meter={song.meter} onPitch={setAudioPitch} onChartCreated={(chordpro) => setSong((s) => ({ ...s, chordpro }))} onChords={setHeard} onPosition={(p) => setPos(p.n === null ? null : { n: p.n, progress: p.progress })} />
+            {canEdit && !song.chordpro?.trim() && (
+              <div className="my-4 flex flex-col items-center gap-2 rounded-lg border-2 border-dashed border-line p-6 text-center print:hidden">
+                <span className="text-sm text-muted">This song has no lyrics yet. They&apos;re used for the big-screen slides and Fusion Tracks.</span>
+                <button className="btn" onClick={() => setEditing(true)}>＋ Add lyrics</button>
+              </div>
+            )}
             <ChordSheet source={song.chordpro} semis={semis} flats={flats} showChords={view !== "lyrics"} numbersKey={view === "numbers" ? song.default_key : null} follow={pos} sectionChords={heard} />
           </div>
           <aside className="space-y-4">

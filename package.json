@@ -13,8 +13,10 @@
     "build:next": "next build"
   },
   "dependencies": {
+    "@breezystack/lamejs": "^1.2.7",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.45.4",
+    "fflate": "^0.8.3",
     "next": "^15.5.29",
     "pdfjs-dist": "^4.10.38",
     "react": "^19.2.0",

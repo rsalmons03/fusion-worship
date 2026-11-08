@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import MultitrackPlayer, { type Stem } from "@/components/tracks/MultitrackPlayer";
 import { sectionsOf } from "@/lib/chordpro";
 import LyricsPanel from "@/components/tracks/LyricsPanel";
+import ChartEditor from "@/components/ChartEditor";
 import { teamVoiceUrls, type CueVoiceId } from "@/lib/cueVoice";
 
 // Fusion Tracks: one song's parts in the multitrack mixer.
@@ -19,6 +20,20 @@ export default function TracksSong() {
   const [play, setPlay] = useState({ t: 0, playing: false, duration: 0, pitch: 0 });
   const control = useRef<{ seek: (t: number) => void; playFrom: (t: number) => void } | null>(null);
   const [showLyrics, setShowLyrics] = useState(true);
+  // Lyrics editor (opened from the lyrics panel)
+  const [draft, setDraft] = useState<string | null>(null);
+  const [savingLyrics, setSavingLyrics] = useState(false);
+  async function saveLyrics() {
+    if (draft == null || !song) return;
+    setSavingLyrics(true);
+    const { error } = await createClient().from("songs").update({ chordpro: draft }).eq("id", songId);
+    setSavingLyrics(false);
+    if (error) return alert("Couldn't save the lyrics: " + error.message);
+    setSong({ ...song, chordpro: draft });
+    applyToGuide(markers, draft);
+    setDraft(null);
+    setShowLyrics(true);
+  }
   useEffect(() => {
     try {
       setShowLyrics(localStorage.getItem("fw.tracks.lyrics") !== "0");
@@ -100,7 +115,6 @@ export default function TracksSong() {
           </div>
           {showLyrics && (
             <LyricsPanel
-              songId={songId}
               chordpro={song.chordpro ?? ""}
               songKey={song.default_key ?? ""}
               time={play.t}
@@ -116,7 +130,26 @@ export default function TracksSong() {
                   createClient().from("song_files").update({ markers: m }).eq("id", markerFile).then(({ error }) => error && alert(error.message));
               }}
               onMarkingDone={() => applyToGuide(markers, song.chordpro ?? "")}
+              onEdit={() => setDraft(song.chordpro ?? "")}
             />
+          )}
+          {draft != null && (
+            <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-3" onClick={() => setDraft(null)}>
+              <div className="max-h-full w-full max-w-3xl overflow-y-auto rounded-xl bg-white p-4 text-black" onClick={(e) => e.stopPropagation()}>
+                <div className="mb-2 flex items-center gap-2">
+                  <h2 className="font-display text-lg font-extrabold">Lyrics: {song.title}</h2>
+                  <button className="ml-auto text-2xl leading-none text-black/50" onClick={() => setDraft(null)} aria-label="Close">×</button>
+                </div>
+                <p className="mb-2 text-sm text-black/60">
+                  Put each section name on its own line (tap the buttons), with its lyrics underneath. Chords are optional: put them in brackets, like [G]Amazing [C]grace.
+                </p>
+                <ChartEditor value={draft} onChange={setDraft} songKey={song.default_key} placeholder={"Verse 1\nFirst line of the verse\nSecond line\n\nChorus\nFirst line of the chorus"} />
+                <div className="mt-3 flex gap-2">
+                  <button className="btn" onClick={saveLyrics} disabled={savingLyrics}>{savingLyrics ? "Saving…" : "Save lyrics"}</button>
+                  <button className="btn-secondary" onClick={() => setDraft(null)}>Cancel</button>
+                </div>
+              </div>
+            </div>
           )}
           </>
         ) : (

@@ -4,6 +4,7 @@ import { decodeAudio } from "@/lib/cueVoice";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { fileExt, fileIcon, isAudio } from "@/lib/media";
+import { isZip, MAX_UPLOAD, toMp3, uploadZipToSong } from "@/lib/zipUpload";
 
 type SongFile = { id: string; name: string; path: string; is_stem?: boolean };
 
@@ -24,6 +25,7 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
   const supabase = createClient();
   const [files, setFiles] = useState<SongFile[]>([]);
   const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState("");
   const [unavailable, setUnavailable] = useState(false);
   const [split, setSplit] = useState<{ jobId: string; status: string; started: number } | null>(null);
 
@@ -82,12 +84,30 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
   async function upload(list: FileList | null) {
     if (!list?.length) return;
     setBusy(true);
-    for (const f of Array.from(list)) {
-      const ext = fileExt(f.name).replace(/[^a-z0-9]/g, "") || "bin";
-      if (f.size > 50 * 1024 * 1024) {
-        alert(`${f.name} is over 50 MB. Try a smaller file.`);
+    const notes: string[] = [];
+    for (let f of Array.from(list)) {
+      // A multitrack zip: unpack it here and upload each part.
+      if (isZip(f)) {
+        const r = await uploadZipToSong(songId, f, setStatus);
+        notes.push(`${f.name}: added ${r.added} file${r.added === 1 ? "" : "s"}${r.shrunk ? ` (${r.shrunk} made smaller to fit)` : ""}.`, ...r.errors);
         continue;
       }
+      if (f.size > MAX_UPLOAD) {
+        if (!isAudio(f.name)) {
+          notes.push(`${f.name} is over 50 MB, the most one file can be.`);
+          continue;
+        }
+        // Too big to store as it is: make a high-quality MP3 of it first.
+        try {
+          setStatus(`Making ${f.name} smaller…`);
+          f = await toMp3(await decodeAudio(await f.arrayBuffer()), f.name, (p) => setStatus(`Making ${f.name} smaller… ${Math.round(p * 100)}%`));
+        } catch (e) {
+          notes.push(`${f.name}: couldn't read this audio (${(e as Error).message}).`);
+          continue;
+        }
+      }
+      setStatus(`Uploading ${f.name}…`);
+      const ext = fileExt(f.name).replace(/[^a-z0-9]/g, "") || "bin";
       const path = `${songId}/${crypto.randomUUID()}.${ext}`;
       const up = await supabase.storage.from("charts").upload(path, f, { contentType: f.type || undefined });
       if (up.error) {
@@ -104,8 +124,10 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
       else if (row?.id && isAudio(path)) analyzeUpload(row.id, f);
     }
     setBusy(false);
+    setStatus("");
     load();
     onChange?.();
+    if (notes.length) alert(notes.join("\n"));
   }
 
   async function open(f: SongFile) {
@@ -190,9 +212,10 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
           </li>
         ))}
       </ul>
+      {canEdit && !busy && <p className="mt-2 text-xs text-muted">Multitrack zip? Upload it as it is: the parts are unpacked and set up for Fusion Tracks.</p>}
       {canEdit && (
-        <label className="btn-secondary mt-3 w-full cursor-pointer">
-          {busy ? "Uploading…" : "Upload files"}
+        <label className="btn-secondary mt-3 w-full cursor-pointer truncate">
+          {busy ? status || "Uploading…" : "Upload files"}
           <input type="file" multiple hidden disabled={busy} onChange={(e) => upload(e.target.files)} />
         </label>
       )}

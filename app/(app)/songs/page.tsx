@@ -9,6 +9,7 @@ import { pro6ToChart, proToChart } from "@/lib/propresenter";
 import { normKey, readAudioTags } from "@/lib/audioTags";
 import { analyze, saveAnalysis } from "@/lib/analysis";
 import { decodeAudio } from "@/lib/cueVoice";
+import { isZip, MAX_UPLOAD, parseZipName, toMp3, uploadZipToSong } from "@/lib/zipUpload";
 import { chordsOverLyricsToChordPro, isChordLine, parseChordPro } from "@/lib/chordpro";
 
 /** True when a chart has at least one line of words. */
@@ -37,8 +38,9 @@ export default function SongsPage() {
   async function importFiles(list: FileList | null) {
     const files = Array.from(list ?? []);
     if (!files.length) return;
-    const audio = files.filter((f) => AUDIO_RE.test(f.name));
-    const other = files.filter((f) => !AUDIO_RE.test(f.name));
+    const zips = files.filter(isZip);
+    const audio = files.filter((f) => AUDIO_RE.test(f.name) && !isZip(f));
+    const other = files.filter((f) => !AUDIO_RE.test(f.name) && !isZip(f));
     const lines: string[] = [];
     // Keep the phone awake: uploads stop if the screen locks.
     let lock: { release: () => Promise<void> } | null = null;
@@ -48,12 +50,37 @@ export default function SongsPage() {
     try {
       if (other.length) lines.push(...(await importLyrics(other)));
       if (audio.length) lines.push(...(await importAudio(audio)));
+      if (zips.length) lines.push(...(await importZips(zips)));
     } finally {
       lock?.release().catch(() => {});
       setImporting("");
       setReload((n) => n + 1);
     }
     alert(lines.join("\n") || "Nothing to import.");
+  }
+
+  /** Multitrack zips ("Firm Foundation-Db major-150bpm.zip"): each one finds or creates its song and becomes its parts. */
+  async function importZips(zips: File[]): Promise<string[]> {
+    const supabase = createClient();
+    const out: string[] = [];
+    const { data: songRows } = await supabase.from("songs").select("id,title");
+    const byTitle = new Map((songRows ?? []).map((r) => [norm(r.title), r.id as string]));
+    for (const z of zips) {
+      const { title, key, bpm } = parseZipName(z.name);
+      let id = byTitle.get(norm(title));
+      if (!id) {
+        const { data, error } = await supabase.from("songs").insert({ title, default_key: key, bpm }).select("id").single();
+        if (error || !data) {
+          out.push(`${title}: ${error?.message ?? "couldn't create the song"}`);
+          continue;
+        }
+        id = data.id as string;
+        byTitle.set(norm(title), id);
+      }
+      const r = await uploadZipToSong(id, z, (m) => setImporting(`${title}: ${m}`));
+      out.push(`🎚 ${title}: ${r.added} part${r.added === 1 ? "" : "s"} added${r.shrunk ? ` (${r.shrunk} made smaller to fit)` : ""}. Open it in Fusion Tracks.`, ...r.errors);
+    }
+    return out;
   }
 
   /** iTunes / Apple Music (.m4a) and MP3 files: each one finds or creates its song and is added as that song's audio. */
@@ -66,11 +93,17 @@ export default function SongsPage() {
     const byTitle = new Map((songRows ?? []).map((r) => [norm(r.title), r as { id: string; title: string; author: string | null; bpm: number | null; default_key: string | null }]));
     let created = 0, attached = 0, skipped = 0;
     const errs: string[] = [];
-    for (const [i, f] of ok.entries()) {
+    for (let [i, f] of ok.entries()) {
       setImporting(`Song ${i + 1} of ${ok.length}…`);
-      if (f.size > 50 * 1024 * 1024) {
-        errs.push(`${f.name}: over 50 MB`);
-        continue;
+      if (f.size > MAX_UPLOAD) {
+        // too big to store as it is: make a high-quality MP3 of it first
+        try {
+          setImporting(`Song ${i + 1} of ${ok.length}: making it smaller…`);
+          f = await toMp3(await decodeAudio(await f.arrayBuffer()), f.name);
+        } catch {
+          errs.push(`${f.name}: over 50 MB and couldn't be read`);
+          continue;
+        }
       }
       const tags = await readAudioTags(f);
       const title = (tags.title || f.name.replace(/\.[^.]+$/, "")).trim();
@@ -255,6 +288,7 @@ export default function SongsPage() {
         <p className="text-xs text-muted">
           <b>📥 Import songs:</b> select your music files (iTunes .m4a or .mp3) <b>and</b> ProPresenter files (.pro / .pro6), all together. Files for the same song are joined up:
           the ProPresenter file gives the lyrics and sections (Verse 1, Chorus…), the music file gives the audio, artist, BPM and key.
+          A <b>multitrack .zip</b> (Click, Guide, Drums, Bass…) works too: it becomes that song&apos;s parts in Fusion Tracks.
           iTunes music is in <i>Music › iTunes › iTunes Media › Music</i> (Windows) or <i>Music › Music › Media › Music</i> (Mac); ProPresenter songs are in <i>Documents › ProPresenter › Libraries</i>.
         </p>
       )}

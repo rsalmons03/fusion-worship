@@ -1,5 +1,4 @@
 "use client";
-import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parseChordPro, prefersFlats, transposeChord, transposeKey, type SheetLine } from "@/lib/chordpro";
 
@@ -40,7 +39,6 @@ function guess(gs: Group[], duration: number) {
 const fmt = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
 
 export default function LyricsPanel({
-  songId,
   chordpro,
   songKey,
   time,
@@ -51,8 +49,8 @@ export default function LyricsPanel({
   onJump,
   onMark,
   onMarkingDone,
+  onEdit,
 }: {
-  songId: string;
   chordpro: string;
   songKey: string;
   time: number;
@@ -64,6 +62,8 @@ export default function LyricsPanel({
   onJump: (t: number) => void;
   onMark: (n: number, t: number) => void;
   onMarkingDone: () => void;
+  /** Opens the lyrics editor. */
+  onEdit: () => void;
 }) {
   const gs = useMemo(() => groups(chordpro), [chordpro]);
   const [chords, setChords] = useState(false);
@@ -89,9 +89,10 @@ export default function LyricsPanel({
 
   if (!gs.some((g) => g.lines.some((l) => l.type === "lyrics")))
     return (
-      <div className="border-t border-white/10 bg-[#101016] p-4 text-center text-sm text-white/70">
-        This song has no lyrics yet.{" "}
-        <Link href={`/songs/${songId}`} className="font-semibold text-[#9b7bff] underline">Add them on the song page</Link> (paste them, or import a ProPresenter / text file on Songs) and they&apos;ll show here.
+      <div className="flex flex-col items-center gap-3 border-t border-white/10 bg-[#101016] p-5 text-center text-sm text-white/70">
+        <span>This song has no lyrics yet.</span>
+        <button onClick={onEdit} className="rounded-full bg-[#9b7bff] px-5 py-2 text-base font-bold text-white">＋ Add lyrics</button>
+        <span className="text-xs text-white/40">Paste them, type them, or import a ProPresenter (.pro) file.</span>
       </div>
     );
 
@@ -120,6 +121,9 @@ export default function LyricsPanel({
             );
           })}
         </div>
+        <button onClick={onEdit} className="shrink-0 rounded-full bg-white/10 px-3 py-1 text-xs font-bold text-white/70">
+          ✎ Edit lyrics
+        </button>
         <button
           onClick={() => {
             const v = !chords;
