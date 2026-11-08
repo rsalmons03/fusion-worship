@@ -1,4 +1,5 @@
 "use client";
+import PcoSync from "@/components/plan/PcoSync";
 import SermonTab from "@/components/plan/SermonTab";
 import Link from "next/link";
 import { useRouter, useParams } from "next/navigation";
@@ -515,6 +516,7 @@ export default function PlanPage() {
                 <Link href={`/plans/${plan.id}/player`} className="btn-secondary">▶ Play</Link>
                 <Link href={`/live/${plan.id}`} className="btn-secondary">📡 Live</Link>
                 <Link href={`/remote/${plan.id}`} className="btn-secondary" title="Lyrics on the big screen with moving backgrounds, controlled from your phone">🖥 Big screen lyrics</Link>
+                {canEdit && <PcoSync planId={plan.id} locationId={plan.location_id ?? null} date={plan.service_date} />}
                 <span className="text-sm text-muted">{items.filter((i) => i.kind !== "header").length} items{totalSec > 0 && ` · ${fmtLen(totalSec)}`}</span>
                 {(() => {
                   const songsN = items.filter((i) => i.kind === "song").length;
