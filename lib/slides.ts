@@ -1,5 +1,5 @@
 import { parseChordPro, sectionsOf } from "./chordpro";
-import type { Sermon } from "./sermon";
+import { DEFAULT_THEME, type Sermon, type SermonTheme } from "./sermon";
 
 export type Slide = {
   key: string;
@@ -7,6 +7,7 @@ export type Slide = {
   kind: "title" | "lyrics" | "info" | "sermon";
   /** Sermon slides: how to lay it out. */
   sermonStyle?: "title" | "heading" | "point" | "scripture";
+  sermonTheme?: SermonTheme;
   /** Lines shown on screen. */
   lines: string[];
   /** Section name, e.g. "Chorus" (lyrics slides only). */
@@ -66,6 +67,7 @@ export function buildSlides(items: SlideItem[], linesPerSlide = 2, sermon?: Serm
       itemId: "sermon",
       kind: "sermon",
       sermonStyle: s.style,
+      sermonTheme: sermon?.theme ?? DEFAULT_THEME,
       lines: [s.text].filter(Boolean),
       section: s.label,
     }));

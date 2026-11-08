@@ -11,7 +11,18 @@ export type SermonSlide = {
   /** Small line above the text (the heading a bullet belongs to, or the scripture reference). */
   label?: string;
 };
-export type Sermon = { title: string; speaker?: string; slides: SermonSlide[]; file?: string; updated?: string };
+/** How sermon slides look: "series" = a sermon-series graphic (colour + texture + frame), "motion" = the lyrics' moving background. */
+export type SermonTheme = { style: "series" | "motion"; bg: string; accent: string; image?: string };
+export const SERIES_PRESETS: { name: string; bg: string; accent: string }[] = [
+  { name: "Purple & Gold", bg: "#5b2bd6", accent: "#f2b233" },
+  { name: "Navy & Orange", bg: "#14295c", accent: "#f08a3c" },
+  { name: "Black & Gold", bg: "#141414", accent: "#e5b53a" },
+  { name: "Fusion Orange", bg: "#c94f24", accent: "#ffe2a8" },
+  { name: "Teal & Coral", bg: "#0f6e73", accent: "#ff8a6b" },
+  { name: "Maroon & Cream", bg: "#6d1530", accent: "#f6e3b4" },
+];
+export const DEFAULT_THEME: SermonTheme = { style: "series", bg: SERIES_PRESETS[0].bg, accent: SERIES_PRESETS[0].accent };
+export type Sermon = { title: string; speaker?: string; slides: SermonSlide[]; file?: string; updated?: string; theme?: SermonTheme };
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 const path = (planId: string) => `sermons/${planId}.json`;

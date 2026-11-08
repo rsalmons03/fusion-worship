@@ -3,7 +3,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import SlideView from "@/components/screen/SlideView";
 import { DEFAULT_SCREEN, type Slide } from "@/lib/slides";
-import { deleteSermon, loadSermon, newSermonSlide, pdfLines, saveSermon, slidesFromLines, type Sermon, type SermonSlide } from "@/lib/sermon";
+import { DEFAULT_THEME, SERIES_PRESETS, deleteSermon, loadSermon, newSermonSlide, pdfLines, saveSermon, slidesFromLines, type Sermon, type SermonSlide, type SermonTheme } from "@/lib/sermon";
+import { createClient } from "@/lib/supabase/client";
 
 const STYLES: { id: SermonSlide["style"]; name: string }[] = [
   { id: "title", name: "Title" },
@@ -26,7 +27,7 @@ function linesFromText(text: string) {
     });
 }
 
-const toSlide = (s: SermonSlide): Slide => ({ key: `sermon:${s.id}`, itemId: "sermon", kind: "sermon", sermonStyle: s.style, lines: [s.text].filter(Boolean), section: s.label });
+const toSlide = (s: SermonSlide, theme: SermonTheme): Slide => ({ key: `sermon:${s.id}`, itemId: "sermon", kind: "sermon", sermonStyle: s.style, sermonTheme: theme, lines: [s.text].filter(Boolean), section: s.label });
 
 export default function SermonTab({ planId, canEdit }: { planId: string; canEdit: boolean }) {
   const [sermon, setSermon] = useState<Sermon | null>(null);
@@ -95,6 +96,19 @@ export default function SermonTab({ planId, canEdit }: { planId: string; canEdit
     setSel(j);
   }
 
+  const theme = sermon?.theme ?? DEFAULT_THEME;
+  const setTheme = (patch: Partial<SermonTheme>) => sermon && update({ ...sermon, theme: { ...theme, ...patch } });
+  async function uploadArt(file?: File) {
+    if (!file) return;
+    setBusy("Uploading art…");
+    const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+    const p = `sermons/${planId}-art-${Date.now()}.${ext}`;
+    const { error } = await createClient().storage.from("charts").upload(p, file, { upsert: true, contentType: file.type || undefined });
+    setBusy("");
+    if (error) return alert(error.message);
+    setTheme({ style: "series", image: p });
+  }
+
   if (!loaded) return <p className="text-sm text-muted">Loading…</p>;
   const cur = sermon?.slides[sel];
 
@@ -128,7 +142,41 @@ export default function SermonTab({ planId, canEdit }: { planId: string; canEdit
       ) : (
         <div className="grid gap-4 lg:grid-cols-[1fr_1.1fr]">
           <div className="space-y-2">
-            {cur && <SlideView slide={toSlide(cur)} state={{ ...DEFAULT_SCREEN, logo: false, bg: "bokeh:ember" }} className="aspect-video w-full rounded-lg shadow" />}
+            {cur && <SlideView slide={toSlide(cur, theme)} state={{ ...DEFAULT_SCREEN, logo: false, bg: "bokeh:ember" }} className="aspect-video w-full rounded-lg shadow" />}
+            {canEdit && (
+              <div className="card space-y-2 text-sm">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="mr-1 text-xs font-bold uppercase tracking-wide text-muted">Look</span>
+                  <button onClick={() => setTheme({ style: "series" })} className={`rounded-full px-3 py-1 text-xs font-semibold ${theme.style === "series" ? "bg-ink text-white" : "border border-line"}`}>Series graphic</button>
+                  <button onClick={() => setTheme({ style: "motion" })} className={`rounded-full px-3 py-1 text-xs font-semibold ${theme.style === "motion" ? "bg-ink text-white" : "border border-line"}`}>Moving background</button>
+                </div>
+                {theme.style === "series" && (
+                  <>
+                    <div className="flex flex-wrap gap-1.5">
+                      {SERIES_PRESETS.map((p) => (
+                        <button
+                          key={p.name}
+                          title={p.name}
+                          onClick={() => setTheme({ bg: p.bg, accent: p.accent })}
+                          className={`h-8 w-12 rounded-md ring-2 ${theme.bg === p.bg && theme.accent === p.accent ? "ring-ink" : "ring-transparent"}`}
+                          style={{ background: p.bg, boxShadow: `inset 0 0 0 4px ${p.accent}` }}
+                        />
+                      ))}
+                      <label className="flex items-center gap-1 text-xs">Colour <input type="color" value={theme.bg} onChange={(e) => setTheme({ bg: e.target.value })} /></label>
+                      <label className="flex items-center gap-1 text-xs">Accent <input type="color" value={theme.accent} onChange={(e) => setTheme({ accent: e.target.value })} /></label>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <label className="btn-ghost cursor-pointer">
+                        🖼 {theme.image ? "Change series art" : "Use our series art as the background"}
+                        <input type="file" accept="image/*" hidden onChange={(e) => { uploadArt(e.target.files?.[0]); e.target.value = ""; }} />
+                      </label>
+                      {theme.image && <button className="text-bad" onClick={() => setTheme({ image: undefined })}>Remove art</button>}
+                    </div>
+                  </>
+                )}
+                <p className="text-xs text-muted">Tip: put <b>*stars*</b> around words to make them the accent colour, e.g. <code>*ENTER TOGETHER.*</code></p>
+              </div>
+            )}
             {canEdit && cur && (
               <div className="card space-y-2 text-sm">
                 <div className="flex flex-wrap gap-1">
