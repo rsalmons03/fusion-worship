@@ -3,8 +3,8 @@ import { analyze, saveAnalysis } from "@/lib/analysis";
 import { decodeAudio } from "@/lib/cueVoice";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { fileExt, fileIcon, isAudio } from "@/lib/media";
-import { isZip, MAX_UPLOAD, toMp3, uploadZipToSong } from "@/lib/zipUpload";
+import { fileIcon, isAudio } from "@/lib/media";
+import { isZip, MAX_UPLOAD, SHRINK_OVER, storageExt, toMp3, uploadZipToSong } from "@/lib/zipUpload";
 
 type SongFile = { id: string; name: string; path: string; is_stem?: boolean };
 
@@ -92,7 +92,7 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
         notes.push(`${f.name}: added ${r.added} file${r.added === 1 ? "" : "s"}${r.shrunk ? ` (${r.shrunk} made smaller to fit)` : ""}.`, ...r.errors);
         continue;
       }
-      if (f.size > MAX_UPLOAD) {
+      if (f.size > (isAudio(f.name) ? SHRINK_OVER : MAX_UPLOAD)) {
         if (!isAudio(f.name)) {
           notes.push(`${f.name} is over 50 MB, the most one file can be.`);
           continue;
@@ -107,7 +107,7 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
         }
       }
       setStatus(`Uploading ${f.name}…`);
-      const ext = fileExt(f.name).replace(/[^a-z0-9]/g, "") || "bin";
+      const ext = storageExt(f);
       const path = `${songId}/${crypto.randomUUID()}.${ext}`;
       const up = await supabase.storage.from("charts").upload(path, f, { contentType: f.type || undefined });
       if (up.error) {

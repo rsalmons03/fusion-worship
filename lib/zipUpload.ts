@@ -1,7 +1,7 @@
 // Multitrack zips (e.g. "Firm Foundation-Db major-150bpm.zip"): unzip on this device, upload each part
 // on its own, and shrink any part over the storage limit to a high-quality MP3 first.
 import { unzip, unzipSync } from "fflate";
-import { Mp3Encoder } from "@breezystack/lamejs";
+import { MP3_PRE_TRIM, newEncoder } from "@/lib/mp3Align";
 import { decodeAudio } from "@/lib/cueVoice";
 import { analyze, saveAnalysis } from "@/lib/analysis";
 import { fileExt, isAudio } from "@/lib/media";
@@ -10,6 +10,8 @@ import { createClient } from "@/lib/supabase/client";
 
 /** Storage refuses single files over this. */
 export const MAX_UPLOAD = 50 * 1024 * 1024;
+/** Audio bigger than this is shrunk first (a margin under the limit, which storage counts in its own way). */
+export const SHRINK_OVER = 45 * 1000 * 1000;
 
 const MIME: Record<string, string> = {
   mp3: "audio/mpeg", m4a: "audio/mp4", aac: "audio/aac", wav: "audio/wav", aif: "audio/aiff", aiff: "audio/aiff",
@@ -58,12 +60,18 @@ export async function unzipFiles(zip: File): Promise<{ name: string; size: numbe
   }));
 }
 
+/** Files made by toMp3 (stored as "<id>.fw.mp3" so players can line them up exactly). */
+const made = new WeakSet<File>();
+/** The storage extension for a file: "fw.mp3" for our MP3s. */
+export const storageExt = (f: File) => (made.has(f) ? "fw.mp3" : fileExt(f.name).replace(/[^a-z0-9]/g, "") || "bin");
+
 /** Re-encodes decoded audio as a 256 kbps MP3 (a 5-minute stereo part ≈ 10 MB). */
 export async function toMp3(audio: AudioBuffer, name: string, onProgress?: (p: number) => void): Promise<File> {
   const ch = Math.min(2, audio.numberOfChannels);
-  const enc = new Mp3Encoder(ch, audio.sampleRate, 256);
-  const L = audio.getChannelData(0);
-  const R = ch > 1 ? audio.getChannelData(1) : undefined;
+  const enc = newEncoder(ch, audio.sampleRate);
+  // the encoder puts ~25 ms in front; drop that much from the start so the part stays in time
+  const L = audio.getChannelData(0).subarray(MP3_PRE_TRIM);
+  const R = ch > 1 ? audio.getChannelData(1).subarray(MP3_PRE_TRIM) : undefined;
   const block = 1152 * 32;
   const out: BlobPart[] = [];
   const i16 = (src: Float32Array, at: number, n: number) => {
@@ -84,7 +92,9 @@ export async function toMp3(audio: AudioBuffer, name: string, onProgress?: (p: n
     }
   }
   out.push(enc.flush().slice());
-  return new File(out, name.replace(/\.[^.]+$/, "") + ".mp3", { type: "audio/mpeg" });
+  const f = new File(out, name.replace(/\.[^.]+$/, "") + ".mp3", { type: "audio/mpeg" });
+  made.add(f);
+  return f;
 }
 
 /**
@@ -119,7 +129,7 @@ export async function uploadZipToSong(
       let f = await e.open();
       const audio = isAudio(e.name);
       let decoded: AudioBuffer | null = null;
-      if (f.size > MAX_UPLOAD) {
+      if (f.size > (audio ? SHRINK_OVER : MAX_UPLOAD)) {
         if (!audio) {
           errors.push(`${e.name}: over 50 MB (skipped)`);
           continue;
@@ -130,9 +140,10 @@ export async function uploadZipToSong(
         shrunk++;
       }
       status(`${label} (uploading)`);
-      const ext = fileExt(f.name).replace(/[^a-z0-9]/g, "") || "bin";
+      const ext = storageExt(f);
       const path = `${songId}/${crypto.randomUUID()}.${ext}`;
-      const up = await supabase.storage.from("charts").upload(path, f, { contentType: f.type || undefined });
+      let up = await supabase.storage.from("charts").upload(path, f, { contentType: f.type || undefined });
+      if (up.error && !/exceed|too large|size/i.test(up.error.message)) up = await supabase.storage.from("charts").upload(path, f, { contentType: f.type || undefined }); // one retry
       if (up.error) {
         errors.push(`${e.name}: ${up.error.message}`);
         continue;

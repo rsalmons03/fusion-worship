@@ -9,7 +9,7 @@ import { pro6ToChart, proToChart } from "@/lib/propresenter";
 import { normKey, readAudioTags } from "@/lib/audioTags";
 import { analyze, saveAnalysis } from "@/lib/analysis";
 import { decodeAudio } from "@/lib/cueVoice";
-import { isZip, MAX_UPLOAD, parseZipName, toMp3, uploadZipToSong } from "@/lib/zipUpload";
+import { isZip, parseZipName, SHRINK_OVER, storageExt, toMp3, uploadZipToSong } from "@/lib/zipUpload";
 import { chordsOverLyricsToChordPro, isChordLine, parseChordPro } from "@/lib/chordpro";
 
 /** True when a chart has at least one line of words. */
@@ -95,7 +95,7 @@ export default function SongsPage() {
     const errs: string[] = [];
     for (let [i, f] of ok.entries()) {
       setImporting(`Song ${i + 1} of ${ok.length}…`);
-      if (f.size > MAX_UPLOAD) {
+      if (f.size > SHRINK_OVER) {
         // too big to store as it is: make a high-quality MP3 of it first
         try {
           setImporting(`Song ${i + 1} of ${ok.length}: making it smaller…`);
@@ -136,9 +136,9 @@ export default function SongsPage() {
         skipped++;
         continue;
       }
-      const ext = (f.name.split(".").pop() ?? "m4a").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const ext = storageExt(f);
       const path = `${song.id}/${crypto.randomUUID()}.${ext}`;
-      const up = await supabase.storage.from("charts").upload(path, f, { contentType: f.type || (ext === "mp3" ? "audio/mpeg" : "audio/mp4") });
+      const up = await supabase.storage.from("charts").upload(path, f, { contentType: f.type || (ext.endsWith("mp3") ? "audio/mpeg" : "audio/mp4") });
       if (up.error) {
         errs.push(`${f.name}: ${up.error.message}`);
         continue;

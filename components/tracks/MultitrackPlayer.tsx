@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 
 import { decodeAudio, sharedAudio, unlockCues, type CueVoiceId } from "@/lib/cueVoice";
 import { hearBeat, renderGuide, type Generated } from "@/lib/guideTrack";
 import { detectChords } from "@/lib/chords";
+import { alignFusionMp3, isFusionMp3 } from "@/lib/mp3Align";
 import { createPitchShifter } from "@/lib/pitchShift";
 
 // ── Fusion Tracks: multitrack player ──
@@ -116,6 +117,8 @@ export default function MultitrackPlayer({
   const names = [...virtual.map((v) => v.name.toUpperCase()), ...labels(real.map((s) => s.name))];
   const [buffers, setBuffers] = useState<Map<string, AudioBuffer>>(new Map());
   const [loading, setLoading] = useState({ done: 0, total: stemsIn.length, error: "" });
+  /** Parts that wouldn't load (after a retry), so they can be tried again. */
+  const [failed, setFailed] = useState<{ id: string; name: string; why: string }[]>([]);
   const [mix, setMix] = useState<Record<string, Ch>>(() => defaults(stems));
   const [playing, setPlaying] = useState(false);
   const [pos, setPos] = useState(0);
@@ -125,28 +128,69 @@ export default function MultitrackPlayer({
   const duration = Math.max(0, ...[...buffers.values()].map((b) => b.duration));
 
   // ── Load every part into memory (with progress) ──
+  async function loadPart(s: Stem): Promise<AudioBuffer> {
+    const r = await fetch(s.url);
+    if (!r.ok) throw new Error(`download failed (${r.status})`);
+    let b = await decodeAudio(await r.arrayBuffer());
+    if (isFusionMp3(s.url)) b = await alignFusionMp3(b); // our shrunk MP3s: put back exactly in time
+    return LIGHT ? await lighten(b) : b;
+  }
+  async function retryFailed() {
+    const again = failed;
+    setFailed([]);
+    setLoading((l) => ({ ...l, error: "" }));
+    const still: typeof failed = [];
+    const add = new Map<string, AudioBuffer>();
+    for (const f of again) {
+      const s = real.find((x) => x.id === f.id);
+      if (!s) continue;
+      try {
+        add.set(s.id, await loadPart(s));
+      } catch (e) {
+        still.push({ ...f, why: (e as Error).message });
+      }
+    }
+    if (add.size) {
+      pause();
+      setBuffers((m) => new Map([...m, ...add]));
+    }
+    setFailed(still);
+    if (still.length) setLoading((l) => ({ ...l, error: `${still.length} part${still.length > 1 ? "s" : ""} didn't load` }));
+  }
   const stemKey = stems.map((s) => s.id).join();
   useEffect(() => {
     let alive = true;
     setBuffers(new Map());
     setLoading({ done: 0, total: real.length, error: "" });
+    setFailed([]);
     (async () => {
       const out = new Map<string, AudioBuffer>();
       let done = 0;
-      await Promise.all(
-        real.map(async (s) => {
-          try {
-            const r = await fetch(s.url);
-            if (!r.ok) throw new Error(`${s.name}: ${r.status}`);
-            const full = await decodeAudio(await r.arrayBuffer());
-            out.set(s.id, LIGHT ? await lighten(full) : full);
-          } catch (e) {
-            if (alive) setLoading((l) => ({ ...l, error: (e as Error).message }));
+      const bad: { id: string; name: string; why: string }[] = [];
+      // A few at a time: decoding every big part at once can run the device out of memory,
+      // and then parts silently go missing.
+      const queue = [...real];
+      const worker = async () => {
+        for (let s = queue.shift(); s; s = queue.shift()) {
+          let why = "";
+          for (let attempt = 0; attempt < 2 && alive; attempt++) {
+            try {
+              out.set(s.id, await loadPart(s));
+              why = "";
+              break;
+            } catch (e) {
+              why = (e as Error).message || "couldn't load";
+            }
           }
+          if (why) bad.push({ id: s.id, name: s.name, why });
           done++;
           if (alive) setLoading((l) => ({ ...l, done }));
-        })
-      );
+        }
+      };
+      await Promise.all(Array.from({ length: LIGHT ? 2 : 3 }, worker));
+      if (!alive) return;
+      setFailed(bad);
+      if (bad.length) setLoading((l) => ({ ...l, error: `${bad.length} part${bad.length > 1 ? "s" : ""} didn't load` }));
       if (alive) setBuffers(out);
     })();
     try {
@@ -172,7 +216,7 @@ export default function MultitrackPlayer({
   keyCb.current = onKeyHeard;
   useEffect(() => {
     setHeardKey("");
-    if (songKey || buffers.size < real.length || !buffers.size) return;
+    if (songKey || loading.done < loading.total || !buffers.size) return;
     const t = window.setTimeout(() => {
       try {
         const harmony = real.filter((s) => !/drum|perc|click|guide|cue/i.test(s.name) && buffers.get(s.id));
@@ -220,7 +264,7 @@ export default function MultitrackPlayer({
     setBeat(null);
     setGen(null);
     setGenFailed(false);
-    if (!virtual.length || buffers.size < real.length || !buffers.size) return;
+    if (!virtual.length || loading.done < loading.total || !buffers.size) return;
     // tempo + first downbeat, heard in the parts (drums first)
     const t = window.setTimeout(() => {
       try {
@@ -483,6 +527,12 @@ export default function MultitrackPlayer({
           {split ? "SPLIT L/R ON" : "SPLIT L/R"}
         </button>
       </div>
+      {ready && failed.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 bg-red-900/60 px-3 py-2 text-sm">
+          <span className="flex-1">⚠ {failed.length === 1 ? "1 part" : `${failed.length} parts`} didn&apos;t load: {failed.map((f) => `${f.name} (${f.why})`).join(", ")}</span>
+          <button className="rounded-full bg-white px-3 py-1 text-xs font-bold text-black" onClick={retryFailed}>Try again</button>
+        </div>
+      )}
       {!ready ? (
         <div className="grid flex-1 place-items-center p-6 text-center text-sm text-white/70">
           {loading.total ? (loading.done < loading.total ? `Loading parts… ${loading.done} of ${loading.total}` : "Building click and guide…") : "No parts for this song yet."}
