@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import { decodeAudio, sharedAudio, unlockCues, type CueVoiceId } from "@/lib/cueVoice";
 import { hearBeat, renderGuide, type Generated } from "@/lib/guideTrack";
 import { detectChords } from "@/lib/chords";
@@ -86,6 +86,7 @@ export default function MultitrackPlayer({
   sections = [],
   voice = "male",
   onKeyHeard,
+  control,
 }: {
   songKey: string;
   title: string;
@@ -96,7 +97,9 @@ export default function MultitrackPlayer({
   /** Where this song's mix is remembered (per device). */
   storageKey: string;
   /** Playback position, for lyrics / chords following along. */
-  onTime?: (t: number, playing: boolean) => void;
+  onTime?: (t: number, playing: boolean, duration: number, pitch: number) => void;
+  /** Lets the page jump the song (e.g. tapping a lyrics section). */
+  control?: MutableRefObject<{ seek: (t: number) => void; playFrom: (t: number) => void } | null>;
   /** Section starts (song time) for the guide's calls. */
   sections?: { label: string; t: number }[];
   /** Guide voice: the team's recorded voice, or a built-in one. */
@@ -390,6 +393,7 @@ export default function MultitrackPlayer({
     if (playing) startAt(to);
     else setPos(to);
   }
+  if (control) control.current = { seek, playFrom: (t) => startAt(Math.max(0, Math.min(duration - 0.05, t))) };
   /** Vamp: loop a range seamlessly (all parts loop on the same sample). */
   function setLoop(l: { start: number; end: number } | null) {
     loopRef.current = l;
@@ -429,7 +433,7 @@ export default function MultitrackPlayer({
         }
         setPos(Math.max(0, t));
         setCountingIn(t < 0);
-        cb.current?.(Math.max(0, t), true);
+        cb.current?.(Math.max(0, t), true, duration, pitch);
         for (const s of stems) {
           const n = g.nodes.get(s.id);
           const el = meters.current.get(s.id);
@@ -440,7 +444,10 @@ export default function MultitrackPlayer({
           const audible = anySolo ? mix[s.id]?.solo : !mix[s.id]?.mute;
           el.style.height = `${audible ? Math.min(100, Math.sqrt(peak) * 100) : 0}%`;
         }
-      } else meters.current.forEach((el) => (el.style.height = "0%"));
+      } else {
+        meters.current.forEach((el) => (el.style.height = "0%"));
+        cb.current?.(pos, false, duration, pitch);
+      }
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
