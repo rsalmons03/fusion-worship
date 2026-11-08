@@ -264,3 +264,10 @@ export const GUIDE_PHRASES: { slug: string; say: string; group: string }[] = [
   ].map(([slug, say]) => ({ slug, say, group: "Sections" })),
   { slug: "cues-on", say: "Cues on", group: "Other" },
 ];
+
+/** The recorded clip for a call ("Chorus", "3"…) as audio, or null when there's no clip for it. */
+export async function cueBuffer(voice: CueVoiceId, label: string): Promise<AudioBuffer | null> {
+  const slug = cueSlug(label);
+  if (!slug || voice === "device") return slug ? load("male", slug) : null;
+  return load(voice, slug);
+}

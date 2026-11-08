@@ -85,3 +85,92 @@ export function snapToBeat(t: number, tempo: Tempo | null, bpm: number | null | 
   const k = Math.round((t - tempo.offset) / spb);
   return tempo.offset + k * spb;
 }
+
+/**
+ * Beat tracking (dynamic programming, after Ellis 2007): finds every beat in a recording, following small
+ * tempo changes, so a generated click lines up with a live band. Returns the beat times (s) and the tempo.
+ */
+export function trackBeats(data: Float32Array, sampleRate: number, bpmHint?: number | null): { bpm: number; beats: number[] } | null {
+  const hop = 256;
+  const fps = sampleRate / hop;
+  const n = Math.floor(data.length / hop);
+  if (n < fps * 8) return null;
+  // onset strength
+  const env = new Float32Array(n);
+  let prev = 0;
+  for (let f = 0; f < n; f++) {
+    let e = 0;
+    const base = f * hop;
+    for (let i = 1; i < hop; i++) {
+      const d = data[base + i] - data[base + i - 1];
+      e += d * d;
+    }
+    e = Math.sqrt(e);
+    env[f] = Math.max(0, e - prev);
+    prev = e;
+  }
+  let mean = 0, sd = 0;
+  for (const v of env) mean += v;
+  mean /= n;
+  for (const v of env) sd += (v - mean) ** 2;
+  sd = Math.sqrt(sd / n) || 1;
+  for (let f = 0; f < n; f++) env[f] = (env[f] - mean) / sd;
+
+  // tempo: autocorrelation at fine (quarter-BPM) resolution, preferring 60–160 BPM
+  let period: number;
+  if (bpmHint) period = (60 * fps) / bpmHint;
+  else {
+    let best = -Infinity, bestBpm = 0;
+    for (let bpm = 55; bpm <= 180; bpm += 0.25) {
+      const lag = (60 * fps) / bpm;
+      const l = Math.round(lag), l2 = Math.round(2 * lag);
+      let s = 0;
+      for (let f = l2; f < n; f++) s += env[f] * env[f - l] + 0.5 * env[f] * env[f - l2];
+      s *= bpm >= 60 && bpm <= 160 ? 1 : 0.8;
+      if (s > best) {
+        best = s;
+        bestBpm = bpm;
+      }
+    }
+    // a slow reading whose double fits nearly as well is probably the faster tempo
+    period = (60 * fps) / bestBpm;
+  }
+
+  // dynamic programming: best chain of beats roughly one period apart, landing on strong onsets
+  const tight = 100;
+  const score = new Float32Array(n);
+  const back = new Int32Array(n).fill(-1);
+  const lo = Math.round(period / 2), hi = Math.round(period * 2);
+  for (let t = 0; t < n; t++) {
+    let bestV = 0, bestP = -1;
+    for (let p = t - hi; p <= t - lo; p++) {
+      if (p < 0) continue;
+      const r = Math.log((t - p) / period);
+      const v = score[p] - tight * r * r;
+      if (bestP < 0 || v > bestV) {
+        bestV = v;
+        bestP = p;
+      }
+    }
+    score[t] = env[t] + (bestP >= 0 ? bestV : 0);
+    back[t] = bestP;
+  }
+  // start from the best-scoring frame in the last period and walk back
+  let end = n - 1;
+  for (let t = Math.max(0, n - Math.round(period)); t < n; t++) if (score[t] > score[end]) end = t;
+  const frames: number[] = [];
+  for (let t = end; t >= 0; t = back[t]) frames.push(t);
+  frames.reverse();
+  // refine each beat to the onset peak nearby (sub-frame)
+  const beats = frames.map((f) => {
+    let m = f;
+    for (let k = f - 2; k <= f + 2; k++) if (k > 0 && k < n - 1 && env[k] > env[m]) m = k;
+    const a = env[m - 1] ?? 0, b = env[m], c = env[m + 1] ?? 0;
+    const d = a - 2 * b + c;
+    const off = d ? Math.max(-0.5, Math.min(0.5, (0.5 * (a - c)) / d)) : 0;
+    return ((m + off) * hop) / sampleRate;
+  });
+  const span = beats.length > 1 ? beats[beats.length - 1] - beats[0] : 0;
+  const bpm = span ? (60 * (beats.length - 1)) / span : (60 * fps) / period;
+  return { bpm: Math.round(bpm * 100) / 100, beats };
+}

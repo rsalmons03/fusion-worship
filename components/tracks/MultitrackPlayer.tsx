@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { decodeAudio, sharedAudio, unlockCues } from "@/lib/cueVoice";
+import { decodeAudio, sharedAudio, unlockCues, type CueVoiceId } from "@/lib/cueVoice";
+import { hearBeat, renderGuide, type Generated } from "@/lib/guideTrack";
 import { createPitchShifter } from "@/lib/pitchShift";
 
 // ── Fusion Tracks: multitrack player ──
@@ -81,6 +82,8 @@ export default function MultitrackPlayer({
   stems: stemsIn,
   storageKey,
   onTime,
+  sections = [],
+  voice = "male",
 }: {
   songKey: string;
   title: string;
@@ -92,15 +95,25 @@ export default function MultitrackPlayer({
   storageKey: string;
   /** Playback position, for lyrics / chords following along. */
   onTime?: (t: number, playing: boolean) => void;
+  /** Section starts (song time) for the guide's calls. */
+  sections?: { label: string; t: number }[];
+  /** Guide voice: the team's recorded voice, or a built-in one. */
+  voice?: CueVoiceId;
 }) {
-  const stems = [...stemsIn].sort((a, b) => rank(a.name) - rank(b.name));
-  const names = labels(stems.map((s) => s.name));
+  const real = [...stemsIn].sort((a, b) => rank(a.name) - rank(b.name));
+  // Songs without their own Click / Guide parts get generated ones (as real channels).
+  const hasClick = real.some((s) => /click/i.test(s.name));
+  const hasGuide = real.some((s) => /guide|cue/i.test(s.name));
+  const virtual: Stem[] = [...(hasClick ? [] : [{ id: "_click", name: "Click", url: "" }]), ...(hasGuide ? [] : [{ id: "_guide", name: "Guide", url: "" }])];
+  const stems = [...virtual, ...real];
+  const names = [...virtual.map((v) => v.name.toUpperCase()), ...labels(real.map((s) => s.name))];
   const [buffers, setBuffers] = useState<Map<string, AudioBuffer>>(new Map());
-  const [loading, setLoading] = useState({ done: 0, total: stems.length, error: "" });
+  const [loading, setLoading] = useState({ done: 0, total: stemsIn.length, error: "" });
   const [mix, setMix] = useState<Record<string, Ch>>(() => defaults(stems));
   const [playing, setPlaying] = useState(false);
   const [pos, setPos] = useState(0);
   const [pitch, setPitch] = useState(0);
+  const [countingIn, setCountingIn] = useState(false);
   const [split, setSplit] = useState(false);
   const duration = Math.max(0, ...[...buffers.values()].map((b) => b.duration));
 
@@ -109,12 +122,12 @@ export default function MultitrackPlayer({
   useEffect(() => {
     let alive = true;
     setBuffers(new Map());
-    setLoading({ done: 0, total: stems.length, error: "" });
+    setLoading({ done: 0, total: real.length, error: "" });
     (async () => {
       const out = new Map<string, AudioBuffer>();
       let done = 0;
       await Promise.all(
-        stems.map(async (s) => {
+        real.map(async (s) => {
           try {
             const r = await fetch(s.url);
             if (!r.ok) throw new Error(`${s.name}: ${r.status}`);
@@ -145,6 +158,55 @@ export default function MultitrackPlayer({
       localStorage.setItem(storageKey, JSON.stringify({ mix, split }));
     } catch {}
   }, [mix, split, storageKey]);
+
+  // ── Generated Click + Guide (with count-in), built once the parts are loaded ──
+  const [countIn, setCountInState] = useState<0 | 1 | 2>(2);
+  useEffect(() => {
+    try {
+      const v = Number(localStorage.getItem("fw.tracks.countin") ?? "2");
+      if (v === 0 || v === 1 || v === 2) setCountInState(v);
+    } catch {}
+  }, []);
+  const setCountIn = (v: 0 | 1 | 2) => {
+    setCountInState(v);
+    try {
+      localStorage.setItem("fw.tracks.countin", String(v));
+    } catch {}
+  };
+  const [beat, setBeat] = useState<{ bpm: number; beats: number[]; firstBeat: number; heard: boolean } | null>(null);
+  const [gen, setGen] = useState<Generated | null>(null);
+  const [genFailed, setGenFailed] = useState(false);
+  const genRef = useRef<Generated | null>(null);
+  genRef.current = gen;
+  useEffect(() => {
+    setBeat(null);
+    setGen(null);
+    setGenFailed(false);
+    if (!virtual.length || buffers.size < real.length || !buffers.size) return;
+    // tempo + first downbeat, heard in the parts (drums first)
+    const t = window.setTimeout(() => {
+      try {
+        const b = hearBeat(real.filter((s) => buffers.get(s.id)).map((s) => ({ name: s.name, buffer: buffers.get(s.id)! })), bpm);
+        if (b) setBeat(b);
+        else setGenFailed(true); // no tempo found: play without a click
+      } catch {
+        setGenFailed(true);
+      }
+    }, 30);
+    return () => window.clearTimeout(t);
+  }, [buffers, bpm]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sectionKey = sections.map((x) => `${x.label}@${x.t.toFixed(2)}`).join();
+  useEffect(() => {
+    if (!beat || !duration) return;
+    let alive = true;
+    const rate = LIGHT ? 24000 : 44100;
+    renderGuide({ duration, beats: beat.beats, beatsPerBar: Math.max(2, Math.min(12, parseInt(meter ?? "", 10) || 4)), countBars: countIn, sections, voice, rate })
+      .then((g) => alive && setGen(g))
+      .catch(() => alive && setGenFailed(true));
+    return () => {
+      alive = false;
+    };
+  }, [beat, countIn, voice, sectionKey, duration]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Audio graph: part → fader → pan → meter → mute/solo → master (→ key change) → speakers ──
   type Node = { fader: GainNode; pan: StereoPannerNode; meter: AnalyserNode; gate: GainNode; src?: AudioBufferSourceNode };
@@ -254,23 +316,31 @@ export default function MultitrackPlayer({
     g.ctx.resume().catch(() => {});
     stopSources();
     const when = g.ctx.currentTime + 0.06;
+    const ge = genRef.current;
+    const P = ge?.preroll ?? 0;
+    // From the top with a count-in: the generated Click/Guide start at their count-in, the parts start after it.
+    const counting = !!ge && countIn > 0 && offset < 0.05;
+    const songStart = when + (counting ? P : 0);
     for (const s of stems) {
-      const b = buffers.get(s.id);
+      const isGen = s.id === "_click" || s.id === "_guide";
+      const b = isGen ? (s.id === "_click" ? ge?.click : ge?.guide) : buffers.get(s.id);
       const n = g.nodes.get(s.id);
       if (!b || !n) continue;
       const src = g.ctx.createBufferSource();
       src.buffer = b;
+      const shift = isGen ? P : 0; // generated audio has the count-in before the song
       const l = loopRef.current;
       if (l) {
         src.loop = true;
-        src.loopStart = l.start;
-        src.loopEnd = l.end;
+        src.loopStart = l.start + shift;
+        src.loopEnd = l.end + shift;
       }
       src.connect(n.fader);
-      src.start(when, Math.min(offset, b.duration - 0.01));
+      if (isGen) src.start(when, counting ? 0 : Math.min(offset + shift, b.duration - 0.01));
+      else src.start(songStart, Math.min(offset, b.duration - 0.01));
       n.src = src;
     }
-    clock.current = { startCtx: when, startPos: offset };
+    clock.current = { startCtx: songStart, startPos: offset };
     setPlaying(true);
   }
   function pause() {
@@ -292,12 +362,14 @@ export default function MultitrackPlayer({
     const g = graph.current;
     if (!g || !playing) return;
     const t = position();
-    for (const n of g.nodes.values()) {
+    const P = genRef.current?.preroll ?? 0;
+    for (const [id, n] of g.nodes) {
       if (!n.src) continue;
+      const shift = id === "_click" || id === "_guide" ? P : 0;
       n.src.loop = !!l;
       if (l) {
-        n.src.loopStart = l.start;
-        n.src.loopEnd = l.end;
+        n.src.loopStart = l.start + shift;
+        n.src.loopEnd = l.end + shift;
       }
     }
     // keep the position clock right when a loop is released
@@ -320,8 +392,9 @@ export default function MultitrackPlayer({
           setPos(0);
           return;
         }
-        setPos(t);
-        cb.current?.(t, true);
+        setPos(Math.max(0, t));
+        setCountingIn(t < 0);
+        cb.current?.(Math.max(0, t), true);
         for (const s of stems) {
           const n = g.nodes.get(s.id);
           const el = meters.current.get(s.id);
@@ -342,7 +415,7 @@ export default function MultitrackPlayer({
   // Stop when leaving the song.
   useEffect(() => () => stopSources(), [songKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const ready = buffers.size > 0 && loading.done >= loading.total;
+  const ready = buffers.size > 0 && loading.done >= loading.total && (!virtual.length || !!gen || genFailed);
   const setCh = (id: string, p: Partial<Ch>) => setMix((m) => ({ ...m, [id]: { ...m[id], ...p } }));
 
   return (
@@ -354,8 +427,8 @@ export default function MultitrackPlayer({
           <div className="min-w-0">
             <div className="truncate font-display text-2xl font-extrabold uppercase">{title}</div>
             {artist && <div className="truncate text-sm text-white/60">{artist}</div>}
-            <div className="mt-1 text-xs text-white/50">
-              {[songKey && `Key: ${songKey}`, bpm && `BPM: ${bpm}`, `Time sig: ${meter || "4/4"}`].filter(Boolean).join(", ")}
+            <div className="mt-1 text-xs text-white/50" data-bpm={beat?.bpm} data-first-beat={beat?.firstBeat} data-preroll={gen?.preroll}>
+              {[songKey && `Key: ${songKey}`, (bpm || beat?.bpm) && `BPM: ${bpm || beat?.bpm}${!bpm && beat ? " (heard)" : ""}`, `Time sig: ${meter || "4/4"}`].filter(Boolean).join(", ")}
             </div>
           </div>
         </div>
@@ -370,7 +443,7 @@ export default function MultitrackPlayer({
       </div>
       {!ready ? (
         <div className="grid flex-1 place-items-center p-6 text-center text-sm text-white/70">
-          {loading.total ? `Loading parts… ${loading.done} of ${loading.total}` : "No parts for this song yet."}
+          {loading.total ? (loading.done < loading.total ? `Loading parts… ${loading.done} of ${loading.total}` : "Building click and guide…") : "No parts for this song yet."}
           {loading.error && <div className="mt-2 text-red-300">{loading.error}</div>}
         </div>
       ) : (
@@ -428,7 +501,7 @@ export default function MultitrackPlayer({
       </div>
       <div className="flex items-stretch gap-2 bg-[#15151c] p-3">
         <button className="w-14 rounded-lg bg-white/10 text-2xl disabled:opacity-40" disabled={!ready} onClick={() => (playing ? pause() : startAt(pos))} aria-label={playing ? "Pause" : "Play"}>
-          {playing ? "❚❚" : "▶"}
+          {playing ? (countingIn ? "•" : "❚❚") : "▶"}
         </button>
         <span className="flex items-center rounded-full bg-white/10 text-sm font-semibold">
           <button className="px-3 py-2" onClick={() => setPitch(Math.max(-6, pitch - 1))} aria-label="Key down">−</button>
@@ -438,13 +511,27 @@ export default function MultitrackPlayer({
         <button className="rounded-full bg-white/10 px-4 text-sm font-semibold" onClick={() => { setMix(defaults(stems)); setSplit(false); setPitch(0); }}>
           Defaults
         </button>
+        {virtual.length > 0 && (
+          <select
+            value={countIn}
+            onChange={(e) => setCountIn(Number(e.target.value) as 0 | 1 | 2)}
+            className="rounded-full bg-white/10 px-3 text-sm font-semibold"
+            aria-label="Count-in"
+            title="Count-in before the song (when playing from the top)"
+          >
+            <option value={2} className="text-black">Count-in: 2 bars</option>
+            <option value={1} className="text-black">Count-in: 1 bar</option>
+            <option value={0} className="text-black">No count-in</option>
+          </select>
+        )}
         <button
           className={`rounded-full px-4 text-sm font-semibold ${loop ? "bg-[#f2c94c] text-black" : "bg-white/10"}`}
           disabled={!ready}
           onClick={() => {
             if (loop) return setLoop(null);
             const t = position();
-            const bar = bpm ? (60 / bpm) * (parseInt(meter ?? "", 10) || 4) : 4;
+            const b = bpm || beat?.bpm;
+            const bar = b ? (60 / b) * (parseInt(meter ?? "", 10) || 4) : 4;
             const len = bar * 4; // vamp the next 4 bars from here
             setLoop({ start: t, end: Math.min(duration, t + len) });
           }}

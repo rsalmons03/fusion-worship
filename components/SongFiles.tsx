@@ -95,7 +95,8 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
         continue;
       }
       const name = ext === "pro" ? f.name : f.name.replace(/\.[^.]+$/, "");
-      const stem = isAudio(path) && STEM_WORDS.test(name);
+      // "Alleluia_Live_Drums_mixed" → treat _ and - as spaces so the part name is recognised
+      const stem = isAudio(path) && STEM_WORDS.test(name.replace(/[_-]+/g, " "));
       let { data: row, error } = await supabase.from("song_files").insert({ song_id: songId, name, path, ...(stem ? { is_stem: true } : {}) }).select("id").single();
       if (error && stem) ({ data: row, error } = await supabase.from("song_files").insert({ song_id: songId, name, path }).select("id").single());
       if (error) alert(error.message);
