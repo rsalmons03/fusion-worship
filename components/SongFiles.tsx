@@ -5,7 +5,7 @@ import { fileExt, fileIcon, isAudio } from "@/lib/media";
 
 type SongFile = { id: string; name: string; path: string; is_stem?: boolean };
 
-const STEM_WORDS = /\b(click|guide|cues?|drums?|perc(ussion)?|loops?|bass|keys|piano|organ|synth|pads?|acoustic|electric|ag|eg|gtr|guitars?|strings|vocals?|vox|bgvs?|choir|tracks?)\b/i;
+const STEM_WORDS = /\b(click|guide|cues?|drums?|perc(ussion)?|loops?|bass|keys|keyboards?|piano|organ|synth|pads?|acoustic|electric|ag|eg|gtr|guitars?|strings|winds?|vocals?|voice|vox|bgvs?|backing|choir|tracks?|other|instrumental|accompaniment|stem)\b/i;
 
 /** PDF charts (e.g. exported from MultiTracks ChartBuilder) and audio files attached to a song. */
 export default function SongFiles({ songId, canEdit, onChange }: { songId: string; canEdit: boolean; onChange?: () => void }) {
