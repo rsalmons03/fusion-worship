@@ -75,7 +75,13 @@ function SermonSlideView({ slide }: { slide: Slide }) {
     <div key={slide.key} className="fw-fade absolute inset-0">
       {logo("absolute left-[4cqw] top-[5cqh] h-[7cqh] w-auto opacity-90")}
       <div className={`absolute inset-x-[8cqw] top-[16cqh] bottom-[10cqh] flex flex-col justify-center ${style === "heading" ? "items-center text-center" : "items-start text-left"}`}>
-        {style === "scripture" && slide.section && (
+        {style === "scripture" && slide.section && !text && (
+          <div className={`self-center text-center font-display font-black uppercase tracking-[0.06em] ${shadow}`} style={{ fontSize: "min(7cqw, 14cqh)" }}>
+            {slide.section}
+            <div className="mx-auto mt-[3cqh] h-[0.7cqh] w-[12cqw] rounded-full bg-[#df6437]" />
+          </div>
+        )}
+        {style === "scripture" && slide.section && text && (
           <div className="mb-[3cqh] font-display text-[min(3.4cqw,6cqh)] font-extrabold uppercase tracking-[0.12em] text-[#f2a65a]">{slide.section}</div>
         )}
         {style === "point" && slide.section && (
@@ -83,6 +89,7 @@ function SermonSlideView({ slide }: { slide: Slide }) {
         )}
         {style === "heading" ? (
           <>
+            {slide.section && <div className="mb-[2.5cqh] font-display text-[min(2.6cqw,5cqh)] font-bold uppercase tracking-[0.3em] text-[#f2a65a]">{slide.section}</div>}
             <div className={`font-display font-black uppercase leading-[1.05] tracking-[0.04em] ${shadow}`} style={{ fontSize: fit(6.5, 2400) }}>{text}</div>
             <div className="mt-[3cqh] h-[0.7cqh] w-[12cqw] rounded-full bg-[#df6437]" />
           </>

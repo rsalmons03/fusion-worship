@@ -52,67 +52,120 @@ export async function pdfLines(file: File): Promise<Line[]> {
   return out;
 }
 
-/** Turns the PDF's lines into slides: title, headings, one slide per bullet, scriptures on their own. */
+// Section headings that organise a manuscript but aren't slides (their paragraphs are read, not shown).
+const META = /^(opening|closing|introduction|intro|conclusion|outline|notes|illustration|story|application|altar call|invitation|announcements?|(opening |closing )?prayer|(five |three |four |\w+ )?(main )?(sermon )?points?)\b/i;
+// Lines the congregation says together: shown as their own slide.
+const CALL = /^(say to (the church|your neighbor|someone)|tell (the person|your neighbor|somebody|someone)[^:]*|declare|repeat after me|say it with me|church,? say)\s*:\s*/i;
+// "Scripture: John 3:16", "Main Scripture: …", "Text: …", "Key verse: …"
+const SCRIPTURE_LEAD = /^(main |key |focus |sermon )?(scripture|text|verse|reading|passage)s?\s*:\s*/i;
+
+const titleCase = (t: string) => (t === t.toUpperCase() && /[A-Z]{3}/.test(t) ? t.toLowerCase().replace(/(^|[\s(“"'-])([a-z])/g, (_, a, b) => a + b.toUpperCase()).replace(/\b(A|An|And|As|At|But|By|For|In|Of|On|Or|The|To|With|Than|Nor|So|Yet)\b/g, (w, _1, i) => (i === 0 ? w : w.toLowerCase())) : t);
+
+/**
+ * Turns the PDF's lines into slides. Works for outlines and full manuscripts:
+ * title (+ subtitle), the main scripture with its verse, each point's heading, its scripture,
+ * one slide per bullet, and "Say to the church:" lines. Speech paragraphs, prayers and page footers are skipped.
+ */
 export function slidesFromLines(lines: Line[]): Sermon {
-  const clean = lines.filter((l) => !/^\d+$/.test(l.text) && !/^page \d+/i.test(l.text)); // page numbers
-  if (!clean.length) return { title: "Sermon", slides: [] };
-  const sizes = clean.map((l) => l.size).sort((a, b) => a - b);
+  if (!lines.length) return { title: "Sermon", slides: [] };
+  const sizes = lines.map((l) => l.size).sort((a, b) => a - b);
   const body = sizes[Math.floor(sizes.length / 2)];
+  const clean = lines.filter(
+    (l) => !/^\d+$/.test(l.text) && !/^page \d+/i.test(l.text) && !/[•|·-]\s*page \d+\s*$/i.test(l.text) && !(l.size < body * 0.85 && /page|\d+\s*$/i.test(l.text))
+  );
   const isHeading = (l: Line) => (l.size >= body * 1.15 || (l.bold && l.text.length < 70 && !BULLET.test(l.text))) && l.text.length < 90;
 
   const slides: SermonSlide[] = [];
   let title = "";
   let titleSlide: SermonSlide | null = null;
   let heading = "";
-  let cur: SermonSlide | null = null;
-  const push = (s: SermonSlide) => {
-    slides.push(s);
-    cur = s;
+  let pointNo = 0;
+  let cur: SermonSlide | null = null; // the slide a wrapped line continues
+  const push = (sl: SermonSlide) => {
+    slides.push(sl);
+    cur = sl;
   };
+  const ended = (t: string) => /[.!?”"’)]\s*$/.test(t);
+
   clean.forEach((l, i) => {
     const t = l.text;
+    // Title: the first (or a much bigger) line.
     if (!title && (i === 0 || l.size >= body * 1.3)) {
-      title = t.replace(BULLET, "");
+      title = titleCase(t.replace(BULLET, ""));
       titleSlide = { id: newId(), style: "title", text: title };
       push(titleSlide);
       cur = null;
       return;
     }
-    // Short lines right under the title (speaker, date, series) go on the title slide.
-    if (titleSlide && slides.length === 1 && !BULLET.test(t) && !isHeading(l) && t.length < 70 && !REF.test(t)) {
-      const ts = titleSlide as SermonSlide;
-      ts.label = ts.label ? `${ts.label} · ${t}` : t;
-      return;
-    }
-    const ref = t.match(REF)?.[0];
-    if (isHeading(l)) {
-      heading = t.replace(BULLET, "");
-      push({ id: newId(), style: "heading", text: heading });
-      cur = null;
-      return;
-    }
     const content = t.replace(BULLET, "").trim();
-    // "John 3:16 For God so loved…" (bullet or not): a scripture slide, reference above the verse.
-    if (ref && content.startsWith(ref)) {
-      const verse = content.slice(ref.length).replace(/^[\s:–—-]+/, "").trim();
-      push({ id: newId(), style: "scripture", text: verse, label: ref });
+    const ref = content.match(REF)?.[0];
+
+    // Scripture: "Scripture: Mark 4:35–41", "John 3:16 For God so loved…", or a reference on its own line.
+    const lead = content.match(SCRIPTURE_LEAD);
+    if (lead || (ref && content.startsWith(ref))) {
+      const rest = content.slice(lead ? lead[0].length : 0);
+      const r = rest.match(REF)?.[0] ?? ref ?? rest;
+      let label = r;
+      let verse = rest.slice(rest.indexOf(r) + r.length).trim();
+      const version = verse.match(/^\((KJV|NIV|NLT|ESV|NKJV|NASB|CSB|AMP|MSG|NRSV)\)\s*/i);
+      if (version) {
+        label = `${r} (${version[1].toUpperCase()})`;
+        verse = verse.slice(version[0].length);
+      }
+      push({ id: newId(), style: "scripture", text: verse.replace(/^[\s:–—-]+/, "").trim(), label });
       return;
     }
+
+    // Headings.
+    if (isHeading(l)) {
+      cur = null;
+      if (META.test(content) && !/^\d/.test(t)) {
+        heading = ""; // organisational heading (Opening Speech, Closing Prayer…): not a slide
+        return;
+      }
+      pointNo = /^\(?\d{1,2}[.)]/.test(t) ? parseInt(t.replace(/^\(/, ""), 10) : pointNo + 1;
+      heading = titleCase(content);
+      push({ id: newId(), style: "heading", text: heading, label: `Point ${pointNo}` });
+      return;
+    }
+
+    // "Say to the church: …" → its own slide.
+    const call = content.match(CALL);
+    if (call) {
+      const said = content.slice(call[0].length).trim();
+      // keep just the quoted words when the line goes on after the quote
+      const quoted = said.match(/^[“"]([^”"]+)[”"]/);
+      push({ id: newId(), style: "point", text: (quoted ? quoted[1] : said.replace(/^[“"]|[”"]$/g, "")).trim(), label: "Say it together" });
+      if (quoted) cur = null;
+      return;
+    }
+
+    // Bullets.
     if (BULLET.test(t)) {
       push({ id: newId(), style: "point", text: content, label: heading || undefined });
       return;
     }
-    if (ref && t.length - ref.length < 6) {
-      // a reference on its own line: the verse text usually follows
-      push({ id: newId(), style: "scripture", text: "", label: ref });
+
+    // Short lines right under the title (subtitle, speaker, date) go on the title slide.
+    if (titleSlide && slides.length === 1 && t.length < 120) {
+      const ts = titleSlide as SermonSlide;
+      ts.label = ts.label ? `${ts.label} · ${t}` : t;
       return;
     }
-    // A wrapped line continues the previous bullet / verse; otherwise it's its own point.
+
+    // A wrapped line: continue the verse / bullet / call it belongs to.
     const prev = cur as SermonSlide | null;
-    if (prev && (prev.style === "point" || prev.style === "scripture") && prev.text.length < 260) prev.text = `${prev.text} ${t}`.trim();
-    else push({ id: newId(), style: "point", text: t, label: heading || undefined });
+    if (prev && prev.style !== "title" && prev.style !== "heading" && (!prev.text || !ended(prev.text)) && prev.text.length < 300) {
+      prev.text = `${prev.text} ${t}`.replace(/^[“"]/, prev.text ? "“" : "").trim();
+      if (prev.style === "point" && prev.label === "Say it together") prev.text = prev.text.replace(/[”"]$/g, "");
+      return;
+    }
+    // Anything else is speech paragraph text: read by the speaker, not shown.
+    cur = null;
   });
-  return { title: title || "Sermon", slides: slides.filter((s) => s.text || s.label) };
+  // Scripture slides: show the verse without its outer quote marks (the slide adds them).
+  slides.forEach((sl) => sl.style === "scripture" && (sl.text = sl.text.replace(/^[“"]\s*/, "").replace(/\s*[”"]$/, "")));
+  return { title: title || "Sermon", slides: slides.filter((sl) => sl.text || sl.label) };
 }
 
 export async function loadSermon(planId: string): Promise<Sermon | null> {

@@ -20,7 +20,9 @@ function linesFromText(text: string) {
     .filter(Boolean)
     .map((t, i) => {
       const heading = i > 0 && (/:$/.test(t) || (t === t.toUpperCase() && /[A-Z]/.test(t) && t.length < 60));
-      return { text: t.replace(/:$/, ""), size: i === 0 ? 20 : heading ? 14 : 11, x: 0, bold: heading };
+      // pasted notes: every other line is its own slide (treated like a bullet), unless it's a scripture or a "Say…:" line
+      const plain = i > 0 && !heading && !/^\s*[•●▪\-–*]|\d+[.)]\s/.test(t) && !/:\s*\S/.test(t.slice(0, 40)) && !/\d+:\d+/.test(t);
+      return { text: (plain ? "• " : "") + t.replace(/:$/, ""), size: i === 0 ? 20 : heading ? 14 : 11, x: 0, bold: heading };
     });
 }
 
