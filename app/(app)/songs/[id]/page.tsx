@@ -1,4 +1,5 @@
 "use client";
+import WorshipOnline from "@/components/WorshipOnline";
 import Link from "next/link";
 import { useRouter, useParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -264,6 +265,11 @@ export default function SongPage() {
             <ChordSheet source={song.chordpro} semis={semis} flats={flats} showChords={view !== "lyrics"} numbersKey={view === "numbers" ? song.default_key : null} follow={pos} sectionChords={heard} />
           </div>
           <aside className="space-y-4">
+            {!isNew && (
+              <div className="card">
+                <WorshipOnline songId={params.id} title={song.title} tutorials={song.tutorials} referenceUrl={song.reference_url} canEdit={canEdit} onSaved={(t) => set("tutorials", t)} />
+              </div>
+            )}
             {song.multitracks_url && (
               <a href={song.multitracks_url} target="_blank" rel="noreferrer" className="btn w-full">Open in MultiTracks</a>
             )}

@@ -1,4 +1,5 @@
 "use client";
+import WorshipOnline from "@/components/WorshipOnline";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -118,6 +119,20 @@ export default function SetPlayerPage() {
           <div className="mt-1">{idx + 1} of {songs.length}</div>
         </div>
       </div>
+
+      {song && (
+        <div className="mb-3">
+          <WorshipOnline
+            songId={song.id}
+            title={song.title}
+            tutorials={song.tutorials}
+            referenceUrl={song.reference_url}
+            canEdit={me.isLeader}
+            compact
+            onSaved={(t) => setSongs((xs) => xs.map((x, i) => (i === idx && x.songs ? { ...x, songs: { ...x.songs, tutorials: t } } : x)))}
+          />
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="sticky top-[57px] z-10 -mx-4 mb-4 flex overflow-x-auto border-b border-line bg-paper px-4">
