@@ -25,7 +25,16 @@ export default function WorshipOnline({
   compact?: boolean;
 }) {
   const link = tutorials?.find((t) => isWO(t.url))?.url ?? (isWO(referenceUrl) ? referenceUrl : null);
-  const find = `https://www.google.com/search?q=${encodeURIComponent(`site:worshiponline.com ${title}`)}`;
+  // No saved link: copy the song name and open Worship Online, ready to paste into their search.
+  async function openAndSearch(e: React.MouseEvent) {
+    e.preventDefault();
+    try {
+      await navigator.clipboard.writeText(title);
+    } catch {}
+    const w = window.open("https://worshiponline.com", "_blank", "noopener");
+    if (!w) window.location.href = "https://worshiponline.com";
+    setTimeout(() => alert(`"${title}" is copied. In Worship Online, tap Search and paste it.`), 300);
+  }
 
   async function connect() {
     const url = prompt(
@@ -49,13 +58,13 @@ export default function WorshipOnline({
           ▶ Practice on Worship Online
         </a>
       ) : (
-        <a href={find} target="_blank" rel="noopener" className={`${btn} inline-flex items-center gap-1.5 border border-[#1f6feb] font-bold text-[#1f6feb] hover:bg-[#1f6feb]/10`}>
-          🔎 Find on Worship Online
+        <a href="https://worshiponline.com" onClick={openAndSearch} className={`${btn} inline-flex items-center gap-1.5 bg-[#1f6feb] font-bold text-white shadow-sm hover:opacity-90`}>
+          ▶ Practice on Worship Online
         </a>
       )}
       {canEdit && (
         <button onClick={connect} className="text-xs font-semibold text-muted underline-offset-2 hover:underline">
-          {link ? "Change link" : "Connect link"}
+          {link ? "Change link" : "Save a direct link (optional)"}
         </button>
       )}
     </div>
