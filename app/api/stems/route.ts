@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { callerProfile } from "@/lib/apiAuth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPrediction, startSplit, stemLabel, stemUrls } from "@/lib/replicate";
+import { getMusicAI, isAudioOutput, maiLabel, musicAIConfigured, resultLinks, startMusicAI } from "@/lib/musicai";
 
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 
@@ -26,7 +27,10 @@ export async function POST(req: Request) {
   if (se || !signed) return NextResponse.json({ error: se?.message ?? "Could not share the file" }, { status: 500 });
 
   try {
-    const pred = await startSplit(signed.signedUrl);
+    // Music.AI (Moises) when it's set up; otherwise Replicate.
+    const pred = musicAIConfigured()
+      ? await startMusicAI(signed.signedUrl, file.name).then((j) => ({ id: `mai:${j.id}`, status: "starting" }))
+      : await startSplit(signed.signedUrl);
     const { data: job, error } = await admin
       .from("stem_jobs")
       .insert({ song_id: file.song_id, file_id: file.id, prediction_id: pred.id, status: pred.status, created_by: me.id })
@@ -53,7 +57,10 @@ export async function GET(req: Request) {
   if (job.status === "done" || job.status === "failed" || (job.status === "importing" && !stuck)) return NextResponse.json({ status: job.status, error: job.error });
 
   try {
-    const pred = await getPrediction(job.prediction_id);
+    const isMai = String(job.prediction_id ?? "").startsWith("mai:");
+    const pred = isMai
+      ? await getMusicAI(job.prediction_id.slice(4)).then((j) => ({ status: j.status, output: j.result, error: j.error }))
+      : await getPrediction(job.prediction_id);
     if (pred.status === "failed" || pred.status === "canceled") {
       await admin.from("stem_jobs").update({ status: "failed", error: pred.error ?? pred.status, updated_at: new Date().toISOString() }).eq("id", job.id);
       return NextResponse.json({ status: "failed", error: pred.error ?? pred.status });
@@ -76,9 +83,17 @@ export async function GET(req: Request) {
       ({ data: claimed } = await admin.from("stem_jobs").update({ status: "importing", updated_at: new Date().toISOString() }).eq("id", job.id).eq("status", "importing").lt("updated_at", stale).select("id"));
     if (!claimed?.length) return NextResponse.json({ status: "importing" });
 
-    const parts = stemUrls(pred.output);
-    if (!parts.length) throw new Error("The splitter finished but returned no parts.");
-    const work = importParts(job, parts);
+    let parts: [string, string][];
+    if (isMai) {
+      const links = resultLinks(pred.output as Record<string, unknown>);
+      // Keep Music.AI's whole result (chords, beats, sections, lyrics…) with the song for the player.
+      await admin.storage
+        .from("charts")
+        .upload(`analysis/${job.song_id}.json`, new Blob([JSON.stringify({ source: "music.ai", at: new Date().toISOString(), result: pred.output })], { type: "application/json" }), { upsert: true, contentType: "application/json" });
+      parts = links.filter(([n, u]) => isAudioOutput(n, u)).map(([n, u]) => [maiLabel(n), u]);
+    } else parts = stemUrls(pred.output).map(([n, u]) => [stemLabel(n), u]);
+    if (!parts.length) throw new Error("The splitter finished but returned no audio parts. (Music.AI: check the workflow has stem outputs.)");
+    const work = importParts(job, parts, isMai);
     // Let the save finish on the server even if the phone disconnects (Cloudflare keeps it running).
     try {
       const { getCloudflareContext } = await import("@opennextjs/cloudflare");
@@ -95,28 +110,37 @@ export async function GET(req: Request) {
 }
 
 /** Downloads every part from Replicate and saves it to the song as a stem (all at once). */
-async function importParts(job: { id: string; song_id: string; file_id: string }, parts: [string, string][]) {
+async function importParts(job: { id: string; song_id: string; file_id: string }, parts: [string, string][], oneAtATime = false) {
   const admin = createAdminClient();
   try {
     const { data: src } = await admin.from("song_files").select("name").eq("id", job.file_id).maybeSingle();
     const { data: existing } = await admin.from("song_files").select("name").eq("song_id", job.song_id);
     const have = new Set((existing ?? []).map((f) => f.name));
-    const results = await Promise.all(
-      parts.map(async ([part, url]) => {
-        const name = `${stemLabel(part)} (split${src?.name ? ` from ${src.name}` : ""})`;
-        if (have.has(name)) return 1; // already saved by an earlier try
-        const audio = await fetch(url);
-        if (!audio.ok) throw new Error(`Downloading ${part} failed (${audio.status})`);
-        const bytes = await audio.arrayBuffer();
-        const path = `${job.song_id}/${crypto.randomUUID()}.mp3`;
-        const up = await admin.storage.from("charts").upload(path, bytes, { contentType: "audio/mpeg", upsert: true });
+    const used = new Set<string>();
+    const one = async ([part, url]: [string, string]) => {
+      let label = part;
+      for (let k = 2; used.has(label); k++) label = `${part} ${k}`;
+      used.add(label);
+      const name = `${label} (split${src?.name ? ` from ${src.name}` : ""})`;
+      if (have.has(name)) return 1; // already saved by an earlier try
+      const audio = await fetch(url);
+      if (!audio.ok) throw new Error(`Downloading ${part} failed (${audio.status})`);
+      const type = (audio.headers.get("content-type") || "").split(";")[0];
+      const ext = /wav/.test(type) || /\.wav(\?|$)/i.test(url) ? "wav" : /flac/.test(type) ? "flac" : /mp4|m4a|aac/.test(type) ? "m4a" : "mp3";
+      const bytes = await audio.arrayBuffer();
+      if (bytes.byteLength > 50 * 1024 * 1024) throw new Error(`${part} is over 50 MB: set the workflow's stem output to MP3.`);
+      const path = `${job.song_id}/${crypto.randomUUID()}.${ext}`;
+      const up = await admin.storage.from("charts").upload(path, bytes, { contentType: type || (ext === "wav" ? "audio/wav" : "audio/mpeg"), upsert: true });
         if (up.error) throw new Error(`Saving ${part} failed: ${up.error.message}`);
         let { error } = await admin.from("song_files").insert({ song_id: job.song_id, name, path, is_stem: true });
         if (error && /is_stem/.test(error.message)) ({ error } = await admin.from("song_files").insert({ song_id: job.song_id, name, path }));
         if (error) throw new Error(error.message);
         return 1;
-      })
-    );
+    };
+    // Big files (e.g. WAV stems) one at a time to stay within the server's memory.
+    const results: number[] = [];
+    if (oneAtATime) for (const p of parts) results.push(await one(p));
+    else results.push(...(await Promise.all(parts.map(one))));
     await admin.from("stem_jobs").update({ status: "done", updated_at: new Date().toISOString() }).eq("id", job.id);
     return results.length;
   } catch (e) {
