@@ -1,4 +1,6 @@
 "use client";
+import { analyze, saveAnalysis } from "@/lib/analysis";
+import { decodeAudio } from "@/lib/cueVoice";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { fileExt, fileIcon, isAudio } from "@/lib/media";
@@ -6,6 +8,16 @@ import { fileExt, fileIcon, isAudio } from "@/lib/media";
 type SongFile = { id: string; name: string; path: string; is_stem?: boolean };
 
 const STEM_WORDS = /\b(click|guide|cues?|drums?|perc(ussion)?|loops?|bass|keys|keyboards?|piano|organ|synth|pads?|acoustic|electric|ag|eg|gtr|guitars?|strings|winds?|vocals?|voice|vox|bgvs?|backing|choir|tracks?|other|instrumental|accompaniment|stem)\b/i;
+
+/** Works out the waveform, tempo and chords for a just-uploaded song and saves them (in the background). */
+function analyzeUpload(fileId: string, f: File) {
+  setTimeout(async () => {
+    try {
+      const audio = await decodeAudio(await f.arrayBuffer());
+      await saveAnalysis(fileId, analyze(audio));
+    } catch {}
+  }, 300);
+}
 
 /** PDF charts (e.g. exported from MultiTracks ChartBuilder) and audio files attached to a song. */
 export default function SongFiles({ songId, canEdit, onChange }: { songId: string; canEdit: boolean; onChange?: () => void }) {
@@ -84,9 +96,11 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
       }
       const name = ext === "pro" ? f.name : f.name.replace(/\.[^.]+$/, "");
       const stem = isAudio(path) && STEM_WORDS.test(name);
-      let { error } = await supabase.from("song_files").insert({ song_id: songId, name, path, ...(stem ? { is_stem: true } : {}) });
-      if (error && stem) ({ error } = await supabase.from("song_files").insert({ song_id: songId, name, path }));
+      let { data: row, error } = await supabase.from("song_files").insert({ song_id: songId, name, path, ...(stem ? { is_stem: true } : {}) }).select("id").single();
+      if (error && stem) ({ data: row, error } = await supabase.from("song_files").insert({ song_id: songId, name, path }).select("id").single());
       if (error) alert(error.message);
+      // Analyse the song now, from the file already on this phone, so it opens instantly for everyone.
+      else if (row?.id && isAudio(path)) analyzeUpload(row.id, f);
     }
     setBusy(false);
     load();

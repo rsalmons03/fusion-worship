@@ -7,6 +7,8 @@ import { fmtDate } from "@/lib/format";
 import type { Song } from "@/lib/types";
 import { pro6ToChart, proToChart } from "@/lib/propresenter";
 import { normKey, readAudioTags } from "@/lib/audioTags";
+import { analyze, saveAnalysis } from "@/lib/analysis";
+import { decodeAudio } from "@/lib/cueVoice";
 import { chordsOverLyricsToChordPro, isChordLine, parseChordPro } from "@/lib/chordpro";
 
 /** True when a chart has at least one line of words. */
@@ -108,9 +110,18 @@ export default function SongsPage() {
         errs.push(`${f.name}: ${up.error.message}`);
         continue;
       }
-      const { error } = await supabase.from("song_files").insert({ song_id: song.id, name, path });
+      const { data: row, error } = await supabase.from("song_files").insert({ song_id: song.id, name, path }).select("id").single();
       if (error) errs.push(`${f.name}: ${error.message}`);
-      else attached++;
+      else {
+        attached++;
+        // Analyse now (waveform, tempo, chords) so the song opens instantly for everyone.
+        if (row?.id) {
+          try {
+            setImporting(`Analysing ${i + 1} of ${ok.length}…`);
+            await saveAnalysis(row.id, analyze(await decodeAudio(await f.arrayBuffer())));
+          } catch {}
+        }
+      }
     }
     return [
       attached && `🎵 Added audio to ${attached} song${attached > 1 ? "s" : ""}${created ? ` (${created} new song${created > 1 ? "s" : ""} created)` : ""}`,

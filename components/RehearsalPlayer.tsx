@@ -1,8 +1,9 @@
 "use client";
 import { alignSections, chartFromTranscript } from "@/lib/autosync";
-import { detectTempo, snapToBeat, type Tempo } from "@/lib/tempo";
-import { detectChords, progression, type ChordResult } from "@/lib/chords";
+import { snapToBeat, type Tempo } from "@/lib/tempo";
+import { progression, type ChordResult } from "@/lib/chords";
 import { transposeChord, withSectionChords } from "@/lib/chordpro";
+import { analyze, loadAnalysis, peaksOf, saveAnalysis, type Analysis } from "@/lib/analysis";
 import { createPitchShifter } from "@/lib/pitchShift";
 import { CUE_VOICES, type CueVoiceId, teamVoiceUrls, cueClick, cueClock, cueLength, decodeAudio, sharedAudio, playThroughSilentSwitch, preloadCues, sayCue, unlockCues } from "@/lib/cueVoice";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -208,50 +209,40 @@ export default function RehearsalPlayer({
     []
   );
 
-  // ── Waveform for the main track ──
+  // ── Waveform, tempo and chords: loaded from the saved analysis (instant); worked out once if missing ──
   const trackUrl = track?.url;
+  const trackId = track?.id;
   useEffect(() => {
     setPeaks(null);
     setTempo(null);
     setHeardChords(null);
     setTime(0);
     setPlaying(false);
-    if (!trackUrl) return;
+    if (!trackUrl || !trackId) return;
     let alive = true;
+    const apply = (a: Analysis) => {
+      if (!alive) return;
+      setPeaks(a.peaks);
+      if (a.tempo) setTempo(a.tempo);
+      if (a.chords) setHeardChords(a.chords);
+    };
     (async () => {
+      const saved = await loadAnalysis(trackId);
+      if (saved) return apply(saved);
+      // First time this file is opened: analyse it (when the phone is idle) and save it for everyone.
       try {
-        const buf = await (await fetch(trackUrl)).arrayBuffer();
-        const audio = await decodeAudio(buf);
-        const data = audio.getChannelData(0);
-        const bins = 240;
-        const step = Math.floor(data.length / bins) || 1;
-        const p: number[] = [];
-        for (let i = 0; i < bins; i++) {
-          let max = 0;
-          for (let j = i * step; j < Math.min((i + 1) * step, data.length); j += 32) max = Math.max(max, Math.abs(data[j]));
-          p.push(max);
-        }
-        const top = Math.max(...p) || 1;
-        if (alive) setPeaks(p.map((x) => x / top));
-        // Find the tempo and beat grid when the phone is idle.
+        const audio = await decodeAudio(await (await fetch(trackUrl)).arrayBuffer());
+        if (!alive) return;
+        setPeaks(peaksOf(audio.getChannelData(0)));
         const run = () => {
           if (!alive) return;
-          try {
-            const t = detectTempo(data, audio.sampleRate);
-            if (alive && t) setTempo(t);
-            // Then the chords, beat by beat.
-            setTimeout(() => {
-              if (!alive) return;
-              try {
-                const c = detectChords(data, audio.sampleRate, t);
-                if (alive && c) setHeardChords(c);
-              } catch {}
-            }, 30);
-          } catch {}
+          const a = analyze(audio);
+          apply(a);
+          if (canEdit) saveAnalysis(trackId, a);
         };
         const w = window as unknown as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => void };
         if (w.requestIdleCallback) w.requestIdleCallback(run, { timeout: 4000 });
-        else setTimeout(run, 1500);
+        else setTimeout(run, 1200);
       } catch {
         if (alive) setPeaks([]); // waveform is optional; playback still works
       }
@@ -259,7 +250,7 @@ export default function RehearsalPlayer({
     return () => {
       alive = false;
     };
-  }, [trackUrl]);
+  }, [trackUrl, trackId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Markers ──
   // Rough section start times spread by lyric lines; used until real times are saved.
