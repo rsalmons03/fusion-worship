@@ -9,23 +9,66 @@ import { createPitchShifter } from "@/lib/pitchShift";
 // Pan doubles as routing for a split cable: Click/Guide hard left (in-ears), band hard right (mains).
 
 export type Stem = { id: string; name: string; url: string };
+
+// Phones/tablets have far less memory than a Mac: there, each part is kept as mono at 24 kHz
+// (about a sixth of the memory; fine for practice in headphones). Macs/PCs keep full quality.
+const LIGHT =
+  typeof navigator !== "undefined" &&
+  (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator as Navigator & { deviceMemory?: number }).deviceMemory! <= 4 || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent)));
+async function lighten(b: AudioBuffer): Promise<AudioBuffer> {
+  const rate = 24000;
+  const W = window as unknown as { OfflineAudioContext: typeof OfflineAudioContext; webkitOfflineAudioContext?: typeof OfflineAudioContext };
+  const OAC = W.OfflineAudioContext || W.webkitOfflineAudioContext;
+  if (!OAC) return b;
+  const off = new OAC(1, Math.ceil(b.duration * rate), rate);
+  const src = off.createBufferSource();
+  src.buffer = b;
+  src.connect(off.destination);
+  src.start();
+  return off.startRendering();
+}
 type Ch = { vol: number; pan: number; mute: boolean; solo: boolean };
 
 const ORDER = ["click", "guide", "cue", "drum", "perc", "loop", "bass", "lead", "vocal", "vox", "bgv", "back", "key", "piano", "organ", "synth", "pad", "acoustic", "electric", "guitar", "string", "other"];
 const rank = (n: string) => {
+  if (/back(ing|ground)?[\s_-]*vo|bgv|harmon/i.test(n)) return ORDER.indexOf("bgv");
   const i = ORDER.findIndex((w) => n.toLowerCase().includes(w));
   return i < 0 ? ORDER.length : i;
 };
 const isLeftPart = (n: string) => /click|guide|cue/i.test(n);
-const short = (n: string) =>
+/** Clean channel labels: drop the song title shared by every file name, "mixed", "_2"… and use mixer shorthand. */
+const words = (n: string) =>
   n
     .replace(/\s*\(split.*\)$/i, "")
-    .replace(/[_-]+/g, " ")
-    .replace(/\b(mixed|stem|track|live)\b/gi, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toUpperCase()
-    .slice(0, 14) || "PART";
+    .replace(/\.[a-z0-9]+$/i, "")
+    .split(/[\s_\-]+/)
+    .filter(Boolean);
+function labels(names: string[]): string[] {
+  const ws = names.map(words);
+  let common = 0;
+  if (ws.length > 1) {
+    while (ws.every((w) => w.length > common + 1 && w[common].toLowerCase() === ws[0][common].toLowerCase())) common++;
+  }
+  const SHORT: [RegExp, string][] = [
+    [/^background vocals?|^backing vocals?|^bgvs?/i, "BGV"],
+    [/^lead vocals?|^vocals?|^vox/i, "LEAD VOX"],
+    [/^electric guitar|^elec(tric)? gtr|^eg/i, "ELEC GTR"],
+    [/^acoustic guitar|^ac(oustic)? gtr|^ag/i, "AC GTR"],
+    [/^synth(esizer)?/i, "SYNTH"],
+  ];
+  return ws.map((w) => {
+    let t = w
+      .slice(common)
+      .filter((x) => !/^(mixed|stem|stems|track|final|master|live)$/i.test(x))
+      .join(" ")
+      .replace(/([a-z])(\d+)$/i, "$1 $2");
+    const num = t.match(/\s(\d+)$/)?.[1];
+    const base = num ? t.slice(0, -num.length - 1) : t;
+    const hit = SHORT.find(([re]) => re.test(base));
+    t = hit ? hit[1] + (num && num !== "1" ? ` ${num}` : "") : base + (num && num !== "1" && num !== "2" ? ` ${num}` : "");
+    return (t || "PART").toUpperCase().slice(0, 16);
+  });
+}
 const fmt = (t: number) => `${Math.floor(Math.max(0, t) / 60)}:${String(Math.floor(Math.max(0, t) % 60)).padStart(2, "0")}`;
 const defaults = (stems: Stem[]): Record<string, Ch> => Object.fromEntries(stems.map((s) => [s.id, { vol: 0.8, pan: 0, mute: false, solo: false }]));
 
@@ -51,6 +94,7 @@ export default function MultitrackPlayer({
   onTime?: (t: number, playing: boolean) => void;
 }) {
   const stems = [...stemsIn].sort((a, b) => rank(a.name) - rank(b.name));
+  const names = labels(stems.map((s) => s.name));
   const [buffers, setBuffers] = useState<Map<string, AudioBuffer>>(new Map());
   const [loading, setLoading] = useState({ done: 0, total: stems.length, error: "" });
   const [mix, setMix] = useState<Record<string, Ch>>(() => defaults(stems));
@@ -74,7 +118,8 @@ export default function MultitrackPlayer({
           try {
             const r = await fetch(s.url);
             if (!r.ok) throw new Error(`${s.name}: ${r.status}`);
-            out.set(s.id, await decodeAudio(await r.arrayBuffer()));
+            const full = await decodeAudio(await r.arrayBuffer());
+            out.set(s.id, LIGHT ? await lighten(full) : full);
           } catch (e) {
             if (alive) setLoading((l) => ({ ...l, error: (e as Error).message }));
           }
@@ -330,7 +375,7 @@ export default function MultitrackPlayer({
         </div>
       ) : (
         <div className="flex flex-1 overflow-x-auto bg-[#6b6b74]">
-          {stems.map((s) => {
+          {stems.map((s, si) => {
             const c = mix[s.id] ?? { vol: 0.8, pan: 0, mute: false, solo: false };
             const panShown = split ? (isLeftPart(s.name) ? -1 : 1) : c.pan;
             return (
@@ -361,7 +406,7 @@ export default function MultitrackPlayer({
                     aria-label={`${s.name} volume`}
                   />
                 </div>
-                <div className="mt-auto w-full truncate text-center text-[10px] font-bold tracking-wide">{short(s.name)}</div>
+                <div className="mt-auto w-full text-center text-[10px] font-bold leading-tight tracking-wide" title={s.name}>{names[si]}</div>
               </div>
             );
           })}
