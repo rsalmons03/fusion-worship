@@ -34,7 +34,7 @@ export default function SlideView({ slide, state, className = "" }: { slide?: Sl
           {slide.lines[1] && <div className="mt-[3cqh] font-display text-[min(2.6cqw,5cqh)] font-semibold uppercase tracking-[0.3em] opacity-80">{slide.lines[1]}</div>}
         </div>
       )}
-      {showWords && slide.kind === "sermon" && (slide.sermonTheme?.style === "series" ? <SeriesSlide slide={slide} /> : <SermonSlideView slide={slide} />)}
+      {showWords && slide.kind === "sermon" && (slide.sermonStyle === "image" ? <OwnSlide slide={slide} /> : slide.sermonTheme?.style === "series" ? <SeriesSlide slide={slide} /> : <SermonSlideView slide={slide} />)}
       {showWords && slide.kind !== "title" && slide.kind !== "sermon" && (
         <div key={slide.key} className="fw-fade absolute inset-0 flex flex-col items-center justify-center px-[6cqw] text-center">
           {slide.lines.map((l, i) => (
@@ -199,6 +199,17 @@ function SeriesSlide({ slide }: { slide: Slide }) {
           <div className={words} style={{ fontSize: size(5.6, 2100) }}><Emph text={text} accent={th.accent} /></div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Your own designed slide (image), shown full screen as it is. */
+function OwnSlide({ slide }: { slide: Slide }) {
+  const url = useSignedUrl(slide.image ?? null);
+  return (
+    <div key={slide.key} className="fw-fade absolute inset-0 bg-black">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      {url && <img src={url} alt="" className="h-full w-full object-contain" />}
     </div>
   );
 }

@@ -6,8 +6,10 @@ import { createClient } from "@/lib/supabase/client";
 export type SermonSlide = {
   id: string;
   /** title = sermon title, heading = a main point's heading, point = a bullet, scripture = a Bible verse */
-  style: "title" | "heading" | "point" | "scripture";
+  style: "title" | "heading" | "point" | "scripture" | "image";
   text: string;
+  /** Your own slide (image in storage), for style "image". */
+  image?: string;
   /** Small line above the text (the heading a bullet belongs to, or the scripture reference). */
   label?: string;
 };
@@ -200,3 +202,42 @@ export async function deleteSermon(planId: string) {
 }
 
 export const newSermonSlide = (style: SermonSlide["style"] = "point", text = ""): SermonSlide => ({ id: newId(), style, text });
+
+/**
+ * Your own designed slides: images (PNG/JPG) as they are, or a PDF (exported from Keynote, PowerPoint,
+ * Canva…) with each page as a slide. Each is saved in storage and becomes an "image" slide.
+ */
+export async function uploadOwnSlides(planId: string, files: File[], onProgress?: (msg: string) => void): Promise<SermonSlide[]> {
+  const sb = createClient();
+  const out: SermonSlide[] = [];
+  const save = async (blob: Blob, ext: string) => {
+    const id = newId();
+    const p = `sermons/${planId}/${id}.${ext}`;
+    const { error } = await sb.storage.from("charts").upload(p, blob, { upsert: true, contentType: blob.type || (ext === "png" ? "image/png" : "image/jpeg") });
+    if (error) throw new Error(error.message);
+    out.push({ id, style: "image", text: "", image: p });
+  };
+  for (const f of files) {
+    if (/\.pdf$/i.test(f.name) || f.type === "application/pdf") {
+      const pdfjs = await import("pdfjs-dist");
+      pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+      const doc = await pdfjs.getDocument({ data: new Uint8Array(await f.arrayBuffer()) }).promise;
+      for (let i = 1; i <= doc.numPages; i++) {
+        onProgress?.(`Page ${i} of ${doc.numPages}…`);
+        const page = await doc.getPage(i);
+        const base = page.getViewport({ scale: 1 });
+        const vp = page.getViewport({ scale: 1920 / base.width }); // full-HD wide
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(vp.width);
+        canvas.height = Math.round(vp.height);
+        await page.render({ canvasContext: canvas.getContext("2d")!, viewport: vp, canvas } as never).promise;
+        const blob = await new Promise<Blob>((res) => canvas.toBlob((b) => res(b!), "image/jpeg", 0.9));
+        await save(blob, "jpg");
+      }
+    } else if (f.type.startsWith("image/")) {
+      onProgress?.(`Uploading ${f.name}…`);
+      await save(f, (f.name.split(".").pop() || "png").toLowerCase());
+    }
+  }
+  return out;
+}

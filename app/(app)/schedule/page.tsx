@@ -387,7 +387,7 @@ export default function SchedulePage() {
         <label className="block">
           <span className="label">Look ahead</span>
           <select className="input w-auto" value={weeks} onChange={(e) => setWeeks(Number(e.target.value))}>
-            {[4, 8, 13, 26].map((w) => <option key={w} value={w}>{w === 13 ? "3 months" : w === 26 ? "6 months" : `${w} weeks`}</option>)}
+            {[4, 6, 8, 13, 26].map((w) => <option key={w} value={w}>{w === 13 ? "3 months" : w === 26 ? "6 months" : `${w} weeks`}</option>)}
           </select>
         </label>
       </header>

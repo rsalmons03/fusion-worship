@@ -6,7 +6,9 @@ export type Slide = {
   itemId: string;
   kind: "title" | "lyrics" | "info" | "sermon";
   /** Sermon slides: how to lay it out. */
-  sermonStyle?: "title" | "heading" | "point" | "scripture";
+  sermonStyle?: "title" | "heading" | "point" | "scripture" | "image";
+  /** Your own slide image (storage path). */
+  image?: string;
   sermonTheme?: SermonTheme;
   /** Lines shown on screen. */
   lines: string[];
@@ -67,6 +69,7 @@ export function buildSlides(items: SlideItem[], linesPerSlide = 2, sermon?: Serm
       itemId: "sermon",
       kind: "sermon",
       sermonStyle: s.style,
+      image: s.image,
       sermonTheme: sermon?.theme ?? DEFAULT_THEME,
       lines: [s.text].filter(Boolean),
       section: s.label,

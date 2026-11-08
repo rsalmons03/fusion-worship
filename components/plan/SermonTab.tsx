@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import SlideView from "@/components/screen/SlideView";
 import { DEFAULT_SCREEN, type Slide } from "@/lib/slides";
-import { DEFAULT_THEME, SERIES_PRESETS, deleteSermon, loadSermon, newSermonSlide, pdfLines, saveSermon, slidesFromLines, type Sermon, type SermonSlide, type SermonTheme } from "@/lib/sermon";
+import { DEFAULT_THEME, SERIES_PRESETS, deleteSermon, loadSermon, newSermonSlide, pdfLines, saveSermon, slidesFromLines, uploadOwnSlides, type Sermon, type SermonSlide, type SermonTheme } from "@/lib/sermon";
 import { createClient } from "@/lib/supabase/client";
 
 const STYLES: { id: SermonSlide["style"]; name: string }[] = [
@@ -27,7 +27,7 @@ function linesFromText(text: string) {
     });
 }
 
-const toSlide = (s: SermonSlide, theme: SermonTheme): Slide => ({ key: `sermon:${s.id}`, itemId: "sermon", kind: "sermon", sermonStyle: s.style, sermonTheme: theme, lines: [s.text].filter(Boolean), section: s.label });
+const toSlide = (s: SermonSlide, theme: SermonTheme): Slide => ({ key: `sermon:${s.id}`, itemId: "sermon", kind: "sermon", sermonStyle: s.style, image: s.image, sermonTheme: theme, lines: [s.text].filter(Boolean), section: s.label });
 
 export default function SermonTab({ planId, canEdit }: { planId: string; canEdit: boolean }) {
   const [sermon, setSermon] = useState<Sermon | null>(null);
@@ -71,6 +71,24 @@ export default function SermonTab({ planId, canEdit }: { planId: string; canEdit
       if (!made.slides.length) throw new Error("Couldn't find any text in that file. If it's a scanned image, paste your notes instead.");
       update({ ...made, file: file.name });
       setSel(0);
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function addOwn(files: File[]) {
+    if (!files.length) return;
+    setBusy("Adding your slides…");
+    try {
+      const own = await uploadOwnSlides(planId, files, setBusy);
+      if (!own.length) throw new Error("No images or PDF pages found.");
+      const base = sermon ?? { title: "Sermon", slides: [] };
+      // add after the selected slide (or at the end)
+      const at = sermon?.slides.length ? sel + 1 : 0;
+      update({ ...base, slides: [...base.slides.slice(0, at), ...own, ...base.slides.slice(at)] });
+      setSel(at);
     } catch (e) {
       alert((e as Error).message);
     } finally {
@@ -122,6 +140,12 @@ export default function SermonTab({ planId, canEdit }: { planId: string; canEdit
           </label>
         )}
         {canEdit && <button className="btn-secondary" onClick={() => setPaste(paste === null ? "" : null)}>📝 Paste notes</button>}
+        {canEdit && (
+          <label className={`btn-secondary cursor-pointer ${busy ? "pointer-events-none opacity-60" : ""}`} title="Slides you designed yourself (Keynote, PowerPoint, Canva…): images, or a PDF with one slide per page">
+            🖼 Upload your own slides
+            <input type="file" accept="image/*,.pdf,application/pdf" multiple hidden onChange={(e) => { addOwn(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
+          </label>
+        )}
         {sermon?.slides.length ? <Link href={`/remote/${planId}`} className="btn-secondary">🖥 Show on big screen</Link> : null}
         {sermon && <span className="text-xs text-muted">{saved ? "✓ Saved" : "Saving…"}{sermon.file ? ` · from ${sermon.file}` : ""}</span>}
       </div>
@@ -177,7 +201,7 @@ export default function SermonTab({ planId, canEdit }: { planId: string; canEdit
                 <p className="text-xs text-muted">Tip: put <b>*stars*</b> around words to make them the accent colour, e.g. <code>*ENTER TOGETHER.*</code></p>
               </div>
             )}
-            {canEdit && cur && (
+            {canEdit && cur && cur.style !== "image" && (
               <div className="card space-y-2 text-sm">
                 <div className="flex flex-wrap gap-1">
                   {STYLES.map((st) => (
@@ -200,7 +224,7 @@ export default function SermonTab({ planId, canEdit }: { planId: string; canEdit
                 <button className="flex-1 text-left" onClick={() => setSel(i)}>
                   <span className="mr-1.5 rounded bg-stone-100 px-1 text-[10px] font-bold uppercase text-muted">{s.style}</span>
                   {s.label && <span className="mr-1 text-xs font-semibold text-accent">{s.label}</span>}
-                  <span className="line-clamp-2">{s.text || <i className="text-muted">(empty)</i>}</span>
+                  <span className="line-clamp-2">{s.style === "image" ? "🖼 Your slide" : s.text || <i className="text-muted">(empty)</i>}</span>
                 </button>
                 {canEdit && (
                   <span className="flex shrink-0 gap-0.5 text-xs">
