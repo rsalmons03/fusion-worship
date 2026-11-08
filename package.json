@@ -16,10 +16,12 @@
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.45.4",
     "next": "^15.5.29",
+    "pdfjs-dist": "^4.10.38",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "^1.20.16",
     "@types/node": "^20.14.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
@@ -27,7 +29,6 @@
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.13",
     "typescript": "^5.5.4",
-    "@opennextjs/cloudflare": "^1.20.16",
     "wrangler": "^4.157.0"
   }
 }

@@ -1,4 +1,5 @@
 "use client";
+import SermonTab from "@/components/plan/SermonTab";
 import Link from "next/link";
 import { useRouter, useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -53,7 +54,7 @@ export default function PlanPage() {
   const [blockouts, setBlockouts] = useState<Blockout[]>([]);
   const [notFound, setNotFound] = useState(false);
   const [sending, setSending] = useState(false);
-  const TABS = ["Order", "Teams", "Times", "Notes", "Files"] as const;
+  const TABS = ["Order", "Teams", "Sermon", "Times", "Notes", "Files"] as const;
   type Tab = (typeof TABS)[number];
   const [tab, setTab] = useState<Tab>("Order");
   const [showDetails, setShowDetails] = useState(false);
@@ -739,6 +740,7 @@ export default function PlanPage() {
       )}
 
           {tab === "Files" && <PlanFiles planId={plan.id} songs={songItems} />}
+          {tab === "Sermon" && <SermonTab planId={plan.id} canEdit={canEdit} />}
         </div>
       </div>
     </div>

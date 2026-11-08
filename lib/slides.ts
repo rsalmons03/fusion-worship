@@ -1,9 +1,12 @@
 import { parseChordPro, sectionsOf } from "./chordpro";
+import type { Sermon } from "./sermon";
 
 export type Slide = {
   key: string;
   itemId: string;
-  kind: "title" | "lyrics" | "info";
+  kind: "title" | "lyrics" | "info" | "sermon";
+  /** Sermon slides: how to lay it out. */
+  sermonStyle?: "title" | "heading" | "point" | "scripture";
   /** Lines shown on screen. */
   lines: string[];
   /** Section name, e.g. "Chorus" (lyrics slides only). */
@@ -52,10 +55,27 @@ export function lyricSections(src: string): { label: string; abbr: string; lines
 }
 
 /** Splits a plan into projector slides: a title slide per song, then its lyrics a few lines at a time. */
-export function buildSlides(items: SlideItem[], linesPerSlide = 2): Slide[] {
+/** Words that mark the sermon in the service order; the sermon slides go right after it. */
+export const SERMON_ITEM = /sermon|message|preach|teaching|\bword\b/i;
+
+export function buildSlides(items: SlideItem[], linesPerSlide = 2, sermon?: Sermon | null): Slide[] {
   const slides: Slide[] = [];
+  const sermonSlides = (): Slide[] =>
+    (sermon?.slides ?? []).map((s) => ({
+      key: `sermon:${s.id}`,
+      itemId: "sermon",
+      kind: "sermon",
+      sermonStyle: s.style,
+      lines: [s.text].filter(Boolean),
+      section: s.label,
+    }));
+  const anchor = sermon?.slides.length ? items.find((i) => i.kind !== "header" && i.kind !== "song" && SERMON_ITEM.test(i.title))?.id : undefined;
   for (const it of items) {
     if (it.kind === "header") continue;
+    if (it.id === anchor) {
+      slides.push(...sermonSlides());
+      continue;
+    }
     const chart = it.songs?.chordpro ?? "";
     if (it.kind === "song" && chart.trim()) {
       slides.push({ key: `${it.id}:t`, itemId: it.id, kind: "title", lines: [it.title, it.songs?.author ?? ""].filter(Boolean) });
@@ -68,6 +88,7 @@ export function buildSlides(items: SlideItem[], linesPerSlide = 2): Slide[] {
       slides.push({ key: `${it.id}:i`, itemId: it.id, kind: "info", lines: [it.title] });
     }
   }
+  if (sermon?.slides.length && !anchor) slides.push(...sermonSlides()); // no sermon item: at the end
   return slides;
 }
 
