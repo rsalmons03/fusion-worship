@@ -34,3 +34,10 @@ body { @apply bg-paper text-ink antialiased; }
 @keyframes fw-kenburns { from { transform: scale(1); } to { transform: scale(1.12) translate(-2%, -1%); } }
 .fw-title { animation: fw-title 1.4s ease-out; }
 @keyframes fw-title { from { opacity: 0; transform: scale(1.06); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
+
+/* Fusion Tracks: vertical channel faders (white cap, like a hardware mixer) */
+.fw-fader { -webkit-appearance: none; appearance: none; background: transparent; }
+.fw-fader::-webkit-slider-runnable-track { background: transparent; width: 40px; }
+.fw-fader::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 40px; height: 22px; border-radius: 6px; background: linear-gradient(#fff, #e6e6ee); box-shadow: 0 2px 4px rgba(0,0,0,.45), inset 0 -2px 0 rgba(0,0,0,.08); }
+.fw-fader::-moz-range-thumb { width: 40px; height: 22px; border: 0; border-radius: 6px; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,.45); }
+.fw-fader::-moz-range-track { background: transparent; }

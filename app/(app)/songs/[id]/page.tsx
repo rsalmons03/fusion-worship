@@ -266,6 +266,11 @@ export default function SongPage() {
           </div>
           <aside className="space-y-4">
             {!isNew && (
+              <Link href={`/tracks/${params.id}`} className="btn w-full justify-center bg-[#2b2340] text-white" title="Multitrack mixer with this song's parts (stems)">
+                🎚 Open in Fusion Tracks
+              </Link>
+            )}
+            {!isNew && (
               <div className="card">
                 <WorshipOnline songId={params.id} title={song.title} tutorials={song.tutorials} referenceUrl={song.reference_url} canEdit={canEdit} onSaved={(t) => set("tutorials", t)} />
               </div>
