@@ -161,7 +161,7 @@ function speakDevice(text: string, rate = 1.15) {
 export async function sayCue(
   voice: CueVoiceId,
   label: string,
-  opts: { when?: number; volume?: number } = {}
+  opts: { when?: number; volume?: number; dest?: AudioNode } = {}
 ): Promise<{ stop: () => void; duration: number }> {
   const slug = voice === "device" ? null : cueSlug(label);
   const c = slug ? context() : null;
@@ -176,7 +176,7 @@ export async function sayCue(
   const g = c.createGain();
   g.gain.value = opts.volume ?? 1;
   s.buffer = buf;
-  s.connect(g).connect(c.destination);
+  s.connect(g).connect(opts.dest ?? c.destination);
   s.start(opts.when ?? 0);
   return {
     stop: () => {
@@ -205,12 +205,12 @@ export function cueClock() {
  * A click like a guide track's: a short woodblock "tock" (the downbeat a little higher),
  * scheduled on the cue clock. Returns a way to cancel it.
  */
-export function cueClick(at: number, accent: boolean, volume = 0.6): { stop: () => void } {
+export function cueClick(at: number, accent: boolean, volume = 0.6, dest?: AudioNode): { stop: () => void } {
   const c = context();
   if (!c) return { stop: () => {} };
   const out = c.createGain();
   out.gain.value = volume;
-  out.connect(c.destination);
+  out.connect(dest ?? c.destination);
   const f = accent ? 1250 : 850;
   const nodes: AudioScheduledSourceNode[] = [];
   // body: two short sine partials with a fast decay

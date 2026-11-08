@@ -514,6 +514,7 @@ export default function PlanPage() {
               <div className="flex flex-wrap items-center gap-2 print:hidden">
                 <Link href={`/plans/${plan.id}/player`} className="btn-secondary">▶ Play</Link>
                 <Link href={`/live/${plan.id}`} className="btn-secondary">📡 Live</Link>
+                {/* Sunday Mode (/sunday/[id]) is built but hidden until approved. */}
                 <Link href={`/remote/${plan.id}`} className="btn-secondary" title="Lyrics on the big screen with moving backgrounds, controlled from your phone">🖥 Big screen lyrics</Link>
                 {/* Planning Center sync is built (components/plan/PcoSync) but hidden: Fusion replaces Planning Center. */}
                 <span className="text-sm text-muted">{items.filter((i) => i.kind !== "header").length} items{totalSec > 0 && ` · ${fmtLen(totalSec)}`}</span>
