@@ -31,18 +31,28 @@ async function call(path: string, init: RequestInit = {}) {
 export type Prediction = { id: string; status: "starting" | "processing" | "succeeded" | "failed" | "canceled"; output?: unknown; error?: string | null };
 
 /** Starts splitting an audio file (given by a URL Replicate can download). */
-export async function startSplit(audioUrl: string): Promise<Prediction> {
-  const model = await call(`/models/${MODEL()}`);
+async function startWith(modelName: string, input: Record<string, unknown>): Promise<Prediction> {
+  const model = await call(`/models/${modelName}`);
   const version = model?.latest_version?.id;
-  if (!version) throw new Error(`Couldn't find the stem model ${MODEL()} on Replicate.`);
-  return call(`/predictions`, {
-    method: "POST",
-    body: JSON.stringify({
-      version,
-      // Parts as MP3s to keep storage small. This model on Replicate offers "htdemucs" (vocals, drums, bass, other).
-      input: { audio: audioUrl, model: process.env.REPLICATE_STEMS_VARIANT || "htdemucs", output_format: "mp3", stem: "none" },
-    }),
-  });
+  if (!version) throw new Error(`Couldn't find the stem model ${modelName} on Replicate.`);
+  return call(`/predictions`, { method: "POST", body: JSON.stringify({ version, input }) });
+}
+
+/**
+ * Starts splitting an audio file (given by a URL Replicate can download).
+ * First tries 6 parts (vocals, drums, bass, guitar, piano/keys, other); if that model or option
+ * isn't accepted, falls back to 4 parts (vocals, drums, bass, other).
+ */
+export async function startSplit(audioUrl: string): Promise<Prediction> {
+  const six = process.env.REPLICATE_STEMS6_MODEL || "cjwbw/demucs";
+  if (process.env.REPLICATE_STEMS6 !== "off") {
+    try {
+      return await startWith(six, { audio: audioUrl, model_name: "htdemucs_6s", output_format: "mp3", mp3_bitrate: 192 });
+    } catch (e) {
+      if (!/Replicate (4\d\d)/.test((e as Error).message) || /Replicate 40[12]/.test((e as Error).message)) throw e; // token / billing problems: report them
+    }
+  }
+  return startWith(MODEL(), { audio: audioUrl, model: process.env.REPLICATE_STEMS_VARIANT || "htdemucs", output_format: "mp3", stem: "none" });
 }
 
 export async function getPrediction(id: string): Promise<Prediction> {
