@@ -51,7 +51,7 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
   }, [songId, canEdit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function splitFile(f: SongFile) {
-    if (!confirm(`Split "${f.name}" into parts (vocals, drums, bass, guitar, keys, other)?\n\nThis uses the paid splitting service (usually a few cents) and takes about 1–3 minutes. The original stays.`)) return;
+    if (!confirm(`Split "${f.name}" into parts (vocals, drums, bass, and the other instruments)?\n\nThis uses the paid splitting service (usually a few cents) and takes about 1–3 minutes. The original stays.`)) return;
     const res = await fetch("/api/stems", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fileId: f.id }) });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) return alert(body.error ?? "Could not start splitting");
@@ -153,7 +153,7 @@ export default function SongFiles({ songId, canEdit, onChange }: { songId: strin
           <li key={f.id} className="flex items-center gap-2">
             <button className="flex-1 truncate text-left text-accent hover:underline" onClick={() => open(f)}>{fileIcon(f.path)} {f.name}</button>
             {canEdit && isAudio(f.path) && !f.is_stem && !split && (
-              <button className="shrink-0 rounded-md bg-accent px-2.5 py-1 text-xs font-bold text-white hover:bg-accent-dark" onClick={() => splitFile(f)} title="Split into vocals, drums, bass, guitar, keys and other">
+              <button className="shrink-0 rounded-md bg-accent px-2.5 py-1 text-xs font-bold text-white hover:bg-accent-dark" onClick={() => splitFile(f)} title="Split into vocals, drums, bass and the other instruments">
                 ✂ Split into stems
               </button>
             )}

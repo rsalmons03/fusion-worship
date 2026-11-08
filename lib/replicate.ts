@@ -39,8 +39,8 @@ export async function startSplit(audioUrl: string): Promise<Prediction> {
     method: "POST",
     body: JSON.stringify({
       version,
-      // Six parts (vocals, drums, bass, guitar, piano, other) as MP3s to keep storage small.
-      input: { audio: audioUrl, model: "htdemucs_6s", output_format: "mp3", stem: "none" },
+      // Parts as MP3s to keep storage small. This model on Replicate offers "htdemucs" (vocals, drums, bass, other).
+      input: { audio: audioUrl, model: process.env.REPLICATE_STEMS_VARIANT || "htdemucs", output_format: "mp3", stem: "none" },
     }),
   });
 }
@@ -59,7 +59,7 @@ export function stemUrls(output: unknown): [string, string][] {
   return out;
 }
 
-const PRETTY: Record<string, string> = { vocals: "Vocals", drums: "Drums", bass: "Bass", guitar: "Guitar", piano: "Keys", other: "Other" };
+const PRETTY: Record<string, string> = { vocals: "Vocals", drums: "Drums", bass: "Bass", guitar: "Guitar", piano: "Keys", other: "Instruments (keys, guitars…)" };
 export const stemLabel = (k: string) => PRETTY[k.toLowerCase()] ?? k.charAt(0).toUpperCase() + k.slice(1);
 
 // ── Auto-sync: speech-to-text with timings (Whisper) to find where each section starts ──

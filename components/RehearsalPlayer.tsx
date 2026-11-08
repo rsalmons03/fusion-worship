@@ -430,7 +430,7 @@ export default function RehearsalPlayer({
   async function splitHere() {
     const src = tracks.find((t) => !t.isStem) ?? track;
     if (!src || splitting) return;
-    if (!confirm(`Split "${src.name}" into Vocals, Drums, Bass, Guitar, Keys and Other?\n\nUses the AI splitting service (a few cents) and takes about 1–3 minutes. The original stays.`)) return;
+    if (!confirm(`Split "${src.name}" into Vocals, Drums, Bass and the other instruments?\n\nUses the AI splitting service (a few cents) and takes about 1–3 minutes. The original stays.`)) return;
     setSplitting("Starting…");
     try {
       const start = await fetch("/api/stems", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fileId: src.id }) }).then((r) => r.json());
@@ -1013,9 +1013,9 @@ export default function RehearsalPlayer({
                 onClick={splitHere}
                 disabled={!!splitting}
                 className="mb-3 w-full rounded-md bg-accent px-3 py-2.5 text-sm font-bold text-white shadow-sm disabled:opacity-80"
-                title="Split into vocals, drums, bass, guitar, keys and other"
+                title="Split into vocals, drums, bass and the other instruments"
               >
-                {splitting ?? "✂ Split this song into stems (vocals, drums, bass, keys…)"}
+                {splitting ?? "✂ Split this song into stems (vocals, drums, bass, instruments)"}
               </button>
             )}
             {showTimes && track && (
