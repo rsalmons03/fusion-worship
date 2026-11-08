@@ -60,7 +60,10 @@ export default function TracksSong() {
       {song && stems && (
         stems.length ? (
           <div className="min-h-0 flex-1">
-            <MultitrackPlayer songKey={song.default_key ?? ""} title={song.title} artist={song.author} bpm={song.bpm} meter={song.meter} stems={stems} storageKey={`fw.tracks.${songId}`} sections={sections} voice={voice} />
+            <MultitrackPlayer songKey={song.default_key ?? ""} title={song.title} artist={song.author} bpm={song.bpm} meter={song.meter} stems={stems} storageKey={`fw.tracks.${songId}`} sections={sections} voice={voice} onKeyHeard={(k) => {
+                // save the heard key to the song when it has none (leaders only; others quietly can't)
+                createClient().from("songs").update({ default_key: k }).eq("id", songId).is("default_key", null).then(() => {});
+              }} />
           </div>
         ) : (
           <p className="m-6 text-white/70">This song has no parts yet. On the song page, upload its stem files (Drums, Bass, Keys…), each one marked as a Stem.</p>

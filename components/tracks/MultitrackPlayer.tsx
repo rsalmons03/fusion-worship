@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { decodeAudio, sharedAudio, unlockCues, type CueVoiceId } from "@/lib/cueVoice";
 import { hearBeat, renderGuide, type Generated } from "@/lib/guideTrack";
+import { detectChords } from "@/lib/chords";
 import { createPitchShifter } from "@/lib/pitchShift";
 
 // ── Fusion Tracks: multitrack player ──
@@ -84,6 +85,7 @@ export default function MultitrackPlayer({
   onTime,
   sections = [],
   voice = "male",
+  onKeyHeard,
 }: {
   songKey: string;
   title: string;
@@ -99,6 +101,8 @@ export default function MultitrackPlayer({
   sections?: { label: string; t: number }[];
   /** Guide voice: the team's recorded voice, or a built-in one. */
   voice?: CueVoiceId;
+  /** Called with the key heard in the music when the song has none entered. */
+  onKeyHeard?: (key: string) => void;
 }) {
   const real = [...stemsIn].sort((a, b) => rank(a.name) - rank(b.name));
   // Songs without their own Click / Guide parts get generated ones (as real channels).
@@ -158,6 +162,37 @@ export default function MultitrackPlayer({
       localStorage.setItem(storageKey, JSON.stringify({ mix, split }));
     } catch {}
   }, [mix, split, storageKey]);
+
+  // ── Key: the song's, or heard in the music (harmony parts mixed together) when none is entered ──
+  const [heardKey, setHeardKey] = useState("");
+  const keyCb = useRef(onKeyHeard);
+  keyCb.current = onKeyHeard;
+  useEffect(() => {
+    setHeardKey("");
+    if (songKey || buffers.size < real.length || !buffers.size) return;
+    const t = window.setTimeout(() => {
+      try {
+        const harmony = real.filter((s) => !/drum|perc|click|guide|cue/i.test(s.name) && buffers.get(s.id));
+        const use = harmony.length ? harmony : real.filter((s) => buffers.get(s.id));
+        const bufs = use.map((s) => buffers.get(s.id)!);
+        const rate = bufs[0].sampleRate;
+        const n = Math.min(...bufs.map((b) => b.length));
+        const step = Math.max(1, Math.round(rate / 11025)); // ~11 kHz is plenty for notes
+        const mix = new Float32Array(Math.floor(n / step));
+        for (const b of bufs) {
+          const d = b.getChannelData(0);
+          for (let i = 0, j = 0; j < mix.length; i += step, j++) mix[j] += d[i] / bufs.length;
+        }
+        const k = detectChords(mix, rate / step, null)?.key;
+        if (k) {
+          setHeardKey(k);
+          keyCb.current?.(k);
+        }
+      } catch {}
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [buffers, songKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const key = songKey || heardKey;
 
   // ── Generated Click + Guide (with count-in), built once the parts are loaded ──
   const [countIn, setCountInState] = useState<0 | 1 | 2>(2);
@@ -428,7 +463,7 @@ export default function MultitrackPlayer({
             <div className="truncate font-display text-2xl font-extrabold uppercase">{title}</div>
             {artist && <div className="truncate text-sm text-white/60">{artist}</div>}
             <div className="mt-1 text-xs text-white/50" data-bpm={beat?.bpm} data-first-beat={beat?.firstBeat} data-preroll={gen?.preroll}>
-              {[songKey && `Key: ${songKey}`, (bpm || beat?.bpm) && `BPM: ${bpm || beat?.bpm}${!bpm && beat ? " (heard)" : ""}`, `Time sig: ${meter || "4/4"}`].filter(Boolean).join(", ")}
+              {[key && `Key: ${key}${!songKey ? " (heard)" : ""}`, (bpm || beat?.bpm) && `BPM: ${bpm || beat?.bpm}${!bpm && beat ? " (heard)" : ""}`, `Time sig: ${meter || "4/4"}`].filter(Boolean).join(", ")}
             </div>
           </div>
         </div>
@@ -505,7 +540,7 @@ export default function MultitrackPlayer({
         </button>
         <span className="flex items-center rounded-full bg-white/10 text-sm font-semibold">
           <button className="px-3 py-2" onClick={() => setPitch(Math.max(-6, pitch - 1))} aria-label="Key down">−</button>
-          Key: {songKey ? transposeName(songKey, pitch) : pitch ? (pitch > 0 ? `+${pitch}` : pitch) : "—"}
+          Key: {key ? transposeName(key, pitch) : pitch ? (pitch > 0 ? `+${pitch}` : pitch) : "—"}
           <button className="px-3 py-2" onClick={() => setPitch(Math.min(6, pitch + 1))} aria-label="Key up">+</button>
         </span>
         <button className="rounded-full bg-white/10 px-4 text-sm font-semibold" onClick={() => { setMix(defaults(stems)); setSplit(false); setPitch(0); }}>
