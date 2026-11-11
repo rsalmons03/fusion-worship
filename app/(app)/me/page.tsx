@@ -74,6 +74,11 @@ export default function MePage() {
           </form>
         </section>
 
+        <Link href="/gifts" className="card block hover:border-accent">
+          <h2 className="h2 mb-1">My strengths &amp; gifts →</h2>
+          <p className="text-sm text-muted">Enneagram, Working Genius, spiritual gifts and more. Fill them in so your leaders can help you serve where you shine.</p>
+        </Link>
+
         <AppVersion />
         <section className="card">
           <h2 className="h2 mb-3">Change password</h2>

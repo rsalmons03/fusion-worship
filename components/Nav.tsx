@@ -50,6 +50,7 @@ export default function Nav() {
           { href: "/roster", label: "Roster" },
           { href: "/confirmations", label: "Confirmations" },
           { href: "/health", label: "Team health" },
+          { href: "/strengths", label: "Strengths & gifts" },
         ]
       : []),
   ];
@@ -128,6 +129,7 @@ export default function Nav() {
           {userOpen && (
             <div className="absolute right-0 mt-2 w-48 overflow-hidden rounded-lg border border-line bg-white py-1 shadow-lg">
               <Link href="/me" className="block px-4 py-2 text-sm hover:bg-stone-50">My profile</Link>
+              <Link href="/gifts" className="block px-4 py-2 text-sm hover:bg-stone-50">My strengths &amp; gifts</Link>
               <button onClick={signOut} className="block w-full px-4 py-2 text-left text-sm text-muted hover:bg-stone-50">Sign out</button>
               <AppVersion className="border-t border-line px-4 py-2" />
             </div>
@@ -140,7 +142,7 @@ export default function Nav() {
       </div>
       {open && (
         <nav className="border-t border-line px-4 py-2 lg:hidden">
-          {[...main, ...manage, { href: "/me", label: "My profile" }].map((l) => (
+          {[...main, ...manage, { href: "/me", label: "My profile" }, { href: "/gifts", label: "My strengths & gifts" }].map((l) => (
             <Link key={l.href} href={l.href} className={`block py-2.5 ${active(l.href) ? "font-semibold text-accent" : ""}`}>
               {l.label}
             </Link>
