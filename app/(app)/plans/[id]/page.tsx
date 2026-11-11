@@ -30,6 +30,7 @@ import type {
   Team,
   OrderTemplate,
 } from "@/lib/types";
+import { isOpen, loadNeeds, NEED_OPTIONS, needKey, saveNeed, type NeedMap, type NeedStatus } from "@/lib/positionNeeds";
 
 type SongLite = Pick<Song, "id" | "title" | "author" | "default_key">;
 
@@ -76,7 +77,21 @@ export default function PlanPage() {
   const loadAssignments = useCallback(async () => {
     const { data } = await supabase.from("assignments").select("*").eq("plan_id", planId);
     setAssignments((data ?? []) as Assignment[]);
+    loadNeeds(supabase, [planId]).then((n) => setNeeds(n.map));
   }, [planId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Whether each position is needed on this service (set in the Scheduler; no entry = needed).
+  const [needs, setNeeds] = useState<NeedMap>(new Map());
+  const needOf = (positionId: string): NeedStatus => needs.get(needKey(planId, positionId)) ?? "needed";
+  async function changeNeed(positionId: string, status: NeedStatus) {
+    const { error } = await saveNeed(supabase, planId, positionId, status);
+    if (error) return alert(/plan_position_needs/.test(error.message) ? "Run the database update 015_position_needs.sql in Supabase first." : error.message);
+    setNeeds((m) => {
+      const next = new Map(m);
+      if (status === "needed") next.delete(needKey(planId, positionId));
+      else next.set(needKey(planId, positionId), status);
+      return next;
+    });
+  }
 
   useEffect(() => {
     (async () => {
@@ -673,10 +688,28 @@ export default function PlanPage() {
                               )}
                             </div>
                           ))}
-                          {here.length < (pos.needed ?? 1) && !adding && (
-                            <p className="px-4 py-2 text-sm italic text-stone-400">
-                              {here.length === 0 ? ((pos.needed ?? 1) > 1 ? `Needs ${pos.needed} people` : "Needs someone") : `Needs ${(pos.needed ?? 1) - here.length} more`}
-                            </p>
+                          {(here.length < (pos.needed ?? 1) || needOf(pos.id) !== "needed") && !adding && (
+                            <div className="flex flex-wrap items-center gap-2 px-4 py-2">
+                              <p className="flex-1 text-sm italic text-stone-400">
+                                {(() => {
+                                  const st = needOf(pos.id);
+                                  if (!isOpen(st)) return here.length ? "" : st === "tracks" ? "🎚 Covered by tracks" : "Not needed this service";
+                                  if (here.length >= (pos.needed ?? 1)) return "";
+                                  const nice = st === "optional" ? " (nice to have)" : "";
+                                  return (here.length === 0 ? ((pos.needed ?? 1) > 1 ? `Needs ${pos.needed} people` : "Needs someone") : `Needs ${(pos.needed ?? 1) - here.length} more`) + nice;
+                                })()}
+                              </p>
+                              {canEdit && (
+                                <select
+                                  className="rounded-full border border-line bg-white px-2 py-0.5 text-xs text-muted print:hidden"
+                                  value={needOf(pos.id)}
+                                  onChange={(e) => changeNeed(pos.id, e.target.value as NeedStatus)}
+                                  aria-label={`Is ${pos.name} needed this service?`}
+                                >
+                                  {NEED_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                </select>
+                              )}
+                            </div>
                           )}
                           {adding && (
                             <div className="px-4 py-2 print:hidden">

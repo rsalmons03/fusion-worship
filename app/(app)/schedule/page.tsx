@@ -11,6 +11,7 @@ import { addDays, copyTimes } from "@/lib/recur";
 import { applyTemplate, loadTemplates } from "@/lib/templates";
 import { isSongSlot, pickSongs, songUses, SONG_GAP_DAYS } from "@/lib/songgap";
 import type { Assignment, Blockout, Plan, Position, PositionMember, Profile, Team } from "@/lib/types";
+import { isOpen, loadNeeds, NEED_OPTIONS, needKey, needLabel, saveNeed, type NeedMap, type NeedStatus } from "@/lib/positionNeeds";
 
 /** Bulk scheduling: a grid of positions × upcoming services, with fair auto-fill. */
 export default function SchedulePage() {
@@ -33,6 +34,10 @@ export default function SchedulePage() {
   const datesFor = (pid: string, extra: Booking[] = []) => [...existingBookings(), ...proposed, ...extra].filter((b) => b.profileId === pid).map((b) => b.date);
   const [busy, setBusy] = useState("");
   const [serviceDay, setServiceDay] = useState(0); // 0 = Sunday
+  // Per service: is each position needed that day? (no entry = needed)
+  const [needs, setNeeds] = useState<NeedMap>(new Map());
+  const [needsOk, setNeedsOk] = useState(true);
+  const [chip, setChip] = useState<string | null>(null); // open menu on a "Still open" chip
 
   const today = todayISO();
   const until = addDays(today, weeks * 7);
@@ -60,6 +65,9 @@ export default function SchedulePage() {
     if (ps.length) {
       const a = await supabase.from("assignments").select("*").in("plan_id", ps.map((x) => x.id));
       setAssignments((a.data ?? []) as Assignment[]);
+      const n = await loadNeeds(supabase, ps.map((x) => x.id));
+      setNeeds(n.map);
+      setNeedsOk(n.ok);
     } else setAssignments([]);
   }, [weeks, loc.current]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -172,18 +180,50 @@ export default function SchedulePage() {
   const at = (planId: string, positionId: string) => assignments.filter((a) => a.plan_id === planId && a.position_id === positionId);
   const prop = (planId: string, positionId: string) => proposed.filter((a) => a.planId === planId && a.positionId === positionId);
 
+  const need = (planId: string, positionId: string): NeedStatus => needs.get(needKey(planId, positionId)) ?? "needed";
+  async function setNeed(planId: string, positionId: string, status: NeedStatus) {
+    if (!needsOk) return alert("To mark positions as needed / not needed, run the database update 015_position_needs.sql (it's also in ALL_UPDATES.sql) in Supabase, then reload.");
+    const before = need(planId, positionId);
+    setNeeds((m) => {
+      const next = new Map(m);
+      if (status === "needed") next.delete(needKey(planId, positionId));
+      else next.set(needKey(planId, positionId), status);
+      return next;
+    });
+    // a spot that's no longer needed drops its suggestions
+    if (!isOpen(status)) setProposed((ps) => ps.filter((b) => !(b.planId === planId && b.positionId === positionId)));
+    const { error } = await saveNeed(supabase, planId, positionId, status);
+    if (error) {
+      alert(error.message);
+      setNeeds((m) => {
+        const next = new Map(m);
+        if (before === "needed") next.delete(needKey(planId, positionId));
+        else next.set(needKey(planId, positionId), before);
+        return next;
+      });
+    }
+  }
+  /** Spots still to fill on a service (this team), needed ones first. */
+  const openSpots = (pl: Plan) =>
+    teamPositions
+      .map((pos) => ({ pos, status: need(pl.id, pos.id), left: (pos.needed ?? 1) - at(pl.id, pos.id).length - prop(pl.id, pos.id).length }))
+      .filter((x) => x.left > 0 && isOpen(x.status))
+      .sort((a, b) => Number(a.status === "optional") - Number(b.status === "optional"));
+
   const existingBookings = (): Booking[] =>
     assignments.map((a) => ({ planId: a.plan_id, positionId: a.position_id, profileId: a.profile_id, date: planDate(a.plan_id) }));
 
   function autoFill(only?: string[]) {
     const slots = plans.flatMap((pl) =>
       teamPositions
-        .filter((pos) => !only || only.includes(pos.id))
+        .filter((pos) => (!only || only.includes(pos.id)) && isOpen(need(pl.id, pos.id)))
         .flatMap((pos) => {
           const open = (pos.needed ?? 1) - at(pl.id, pos.id).length - prop(pl.id, pos.id).length;
           return Array.from({ length: Math.max(0, open) }, () => ({ planId: pl.id, date: pl.service_date, positionId: pos.id }));
         })
     );
+    // "Needed" spots get first pick of people; "Nice to have" ones after.
+    slots.sort((a, b) => Number(need(a.planId, a.positionId) === "optional") - Number(need(b.planId, b.positionId) === "optional"));
     const candidates = Object.fromEntries(teamPositions.map((p) => [p.id, rosterFor(p.id)]));
     const filled = fairFill({ slots, candidates, existing: [...existingBookings(), ...proposed], blocked: isBlocked, verified: isVerified, avoidBackToBack: backToBack, maxInARow: maxRow, canDouble: (id) => !!positions.find((p) => p.id === id)?.can_double, weight: weightFor });
     setProposed([...proposed, ...filled]);
@@ -198,8 +238,9 @@ export default function SchedulePage() {
     let rested = 0;
     for (const pl of plans) {
       if (at(pl.id, positionId).some((a) => a.profile_id === profileId) || prop(pl.id, positionId).some((a) => a.profileId === profileId)) continue;
-      const need = positions.find((p) => p.id === positionId)?.needed ?? 1;
-      if (at(pl.id, positionId).length + prop(pl.id, positionId).length >= need) continue; // already full
+      if (!isOpen(need(pl.id, positionId))) continue; // marked not needed / tracks that day
+      const howMany = positions.find((p) => p.id === positionId)?.needed ?? 1;
+      if (at(pl.id, positionId).length + prop(pl.id, positionId).length >= howMany) continue; // already full
       if (isBlocked(profileId, pl.service_date)) {
         skipped++;
         continue;
@@ -307,11 +348,37 @@ export default function SchedulePage() {
     ) : null;
   };
 
+  function NeedSelect({ pl, pos }: { pl: Plan; pos: Position }) {
+    const st = need(pl.id, pos.id);
+    const tone = st === "needed" ? "border-red-200 bg-red-50 text-red-800" : st === "optional" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-line bg-stone-100 text-muted";
+    return (
+      <select
+        aria-label={`Is ${pos.name} needed on ${pl.service_date}?`}
+        title="Is this position needed this day?"
+        className={`max-w-full rounded-full border px-1.5 py-0 text-[10px] font-bold uppercase tracking-wide ${tone}`}
+        value={st}
+        onChange={(e) => setNeed(pl.id, pos.id, e.target.value as NeedStatus)}
+      >
+        {NEED_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    );
+  }
+
   function renderCell(pl: Plan, pos: Position) {
     const here = at(pl.id, pos.id);
     const sug = prop(pl.id, pos.id);
     const open = cell?.planId === pl.id && cell.positionId === pos.id;
     const players = rosterFor(pos.id);
+    const st = need(pl.id, pos.id);
+    const left = (pos.needed ?? 1) - here.length - sug.length;
+    // Marked "not needed" / "tracks" and nobody booked: just say so (and let it be changed back).
+    if (!isOpen(st) && !here.length && !sug.length && !open)
+      return (
+        <div className="space-y-1">
+          <div className="rounded bg-stone-50 px-1 py-0.5 text-[12px] italic text-stone-400">{st === "tracks" ? "🎚 Covered by tracks" : "Not needed"}</div>
+          <NeedSelect pl={pl} pos={pos} />
+        </div>
+      );
     return (
       <div className="space-y-1">
         {here.map((a) => (
@@ -336,9 +403,9 @@ export default function SchedulePage() {
             onClick={() => setCell({ planId: pl.id, positionId: pos.id })}
           >
             {(() => {
-              const left = (pos.needed ?? 1) - here.length - sug.length;
-              if (!here.length && !sug.length) return (pos.needed ?? 1) > 1 ? `Needs ${pos.needed}` : "Needs someone";
-              return left > 0 ? `+ ${left} more needed` : "+ add";
+              const nice = st === "optional";
+              if (!here.length && !sug.length) return nice ? "Nice to have" : (pos.needed ?? 1) > 1 ? `Needs ${pos.needed}` : "Needs someone";
+              return left > 0 ? (nice ? `+ ${left} more if free` : `+ ${left} more needed`) : "+ add";
             })()}
           </button>
         ) : (
@@ -362,6 +429,7 @@ export default function SchedulePage() {
             </optgroup>
           </select>
         )}
+        {(left > 0 || st !== "needed") && <NeedSelect pl={pl} pos={pos} />}
       </div>
     );
   }
@@ -414,6 +482,11 @@ export default function SchedulePage() {
           </button>
         )}
       </div>
+      {!needsOk && plans.length > 0 && (
+        <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          To mark positions as <b>needed / not needed</b> for a day, run the database update <b>015_position_needs.sql</b> (also in ALL_UPDATES.sql) in Supabase, then reload.
+        </p>
+      )}
       {(dupes.length > 0 || offDay.length > 0) && (
         <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           {dupes.map((d) => (
@@ -493,12 +566,75 @@ export default function SchedulePage() {
                         {!pl && (
                           <button className="mt-1 text-[11px] font-semibold text-accent hover:underline" disabled={!!busy} onClick={() => createServices([date])}>+ Create service</button>
                         )}
+                        {pl && teamPositions.length > 0 && (() => {
+                          const o = openSpots(pl);
+                          const req = o.filter((x) => x.status === "needed").reduce((n, x) => n + x.left, 0);
+                          return (
+                            <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${req ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800"}`}>
+                              {req ? `${req} open` : "✓ All set"}
+                            </span>
+                          );
+                        })()}
                       </th>
                     );
                   })}
                 </tr>
               </thead>
               <tbody>
+                <tr className="border-b-2 border-line bg-red-50/40 align-top">
+                  <th className="sticky left-0 z-10 bg-red-50 px-3 py-2 text-left font-normal">
+                    <div className="text-xs font-bold uppercase tracking-wide text-red-900">Still open</div>
+                    <div className="text-[11px] text-muted">Positions missing that day. Tap one to book someone or mark it not needed.</div>
+                  </th>
+                  {columns.map(({ date, plan: pl }) => {
+                    if (!pl) return <td key={`missing-${date}`} className="border-l border-line bg-stone-50" />;
+                    const o = openSpots(pl);
+                    const off = teamPositions.filter((pos) => !isOpen(need(pl.id, pos.id)) && !at(pl.id, pos.id).length);
+                    return (
+                      <td key={pl.id} className="border-l border-line px-2 py-2">
+                        {!o.length && <div className="text-[12px] font-semibold text-emerald-700">✓ Everyone&apos;s booked</div>}
+                        <div className="flex flex-wrap gap-1">
+                          {o.map(({ pos, status, left }) => {
+                            const k = needKey(pl.id, pos.id);
+                            return (
+                              <span key={pos.id} className="relative">
+                                <button
+                                  className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${status === "optional" ? "border-amber-300 bg-amber-50 text-amber-900" : "border-red-300 bg-white text-red-800"}`}
+                                  onClick={() => setChip(chip === k ? null : k)}
+                                  title={status === "optional" ? "Nice to have" : "Needed"}
+                                >
+                                  {pos.name}{left > 1 ? ` ×${left}` : ""}{status === "optional" ? " ?" : ""}
+                                </button>
+                                {chip === k && (
+                                  <span className="absolute left-0 top-full z-30 mt-1 flex w-48 flex-col overflow-hidden rounded-md border border-line bg-white text-left text-[12px] shadow-lg">
+                                    <button className="px-3 py-1.5 text-left font-semibold text-accent hover:bg-stone-50" onClick={() => { setChip(null); setCell({ planId: pl.id, positionId: pos.id }); }}>
+                                      + Book someone…
+                                    </button>
+                                    {NEED_OPTIONS.map((opt) => (
+                                      <button
+                                        key={opt.value}
+                                        className={`border-t border-line px-3 py-1.5 text-left hover:bg-stone-50 ${opt.value === status ? "font-bold" : ""}`}
+                                        onClick={() => { setChip(null); setNeed(pl.id, pos.id, opt.value); }}
+                                      >
+                                        {opt.value === status ? "● " : ""}{opt.label}
+                                        <span className="block text-[10px] text-muted">{opt.hint}</span>
+                                      </button>
+                                    ))}
+                                  </span>
+                                )}
+                              </span>
+                            );
+                          })}
+                        </div>
+                        {off.length > 0 && (
+                          <div className="mt-1 text-[10px] text-muted" title={off.map((p) => `${p.name}: ${needLabel(need(pl.id, p.id)).label}`).join("\n")}>
+                            {off.map((p) => `${p.name} (${needLabel(need(pl.id, p.id)).short.replace("🎚 ", "")})`).join(", ")}
+                          </div>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
                 {groups.map((g) => (
                   <tr key={g.key} className="border-b border-line align-top last:border-0">
                     <th className="sticky left-0 z-10 bg-stone-50 px-3 py-2 text-left font-normal">
